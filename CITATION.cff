@@ -1,0 +1,49 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "OpenCashFlow: Cash-flow underwriting for SME credit risk"
+version: 0.1.0
+date-released: 2026-11-21
+license: Apache-2.0
+repository-code: "https://github.com/opencashflow/opencashflow"
+url: "https://github.com/opencashflow/opencashflow"
+abstract: >-
+  An open-source cash-flow underwriting toolkit for B2B and SME credit risk. It turns
+  open-banking-style transactions into 151 documented cash-flow features, probability-of-default
+  scores and explainable decisions, with LimiX-2 as the primary tabular foundation model and
+  LightGBM, XGBoost, logistic regression and a heuristic scorecard as baselines.
+keywords:
+  - credit risk
+  - cash flow
+  - SME
+  - open banking
+  - probability of default
+  - tabular foundation model
+  - LimiX
+authors:
+  - name: "OpenCashFlow contributors"
+    affiliation: "Open source community"
+references:
+  - type: software
+    title: "LimiX"
+    authors:
+      - name: "Stable AI"
+    url: "https://github.com/limix-ldm-ai/LimiX"
+    notes: "Code pinned at a917fa0; weights LimiX-2-1016 at bbbf26c under a non-commercial licence."
+  - type: dataset
+    title: "Polish Companies Bankruptcy"
+    authors:
+      - name: "Tomczak, Sebastian"
+    doi: "10.24432/C5F600"
+  - type: dataset
+    title: "Statlog (German Credit Data)"
+    authors:
+      - name: "Hofmann, Hans"
+    doi: "10.24432/C5NC77"
+  - type: dataset
+    title: "Structured Data Suffices: Machine Learning for SME Credit Risk Assessment in an Emerging Market"
+    authors:
+      - name: "Chowdhury, Shoumya"
+      - name: "Das, Anmita"
+      - name: "Paul, Sushanta"
+    doi: "10.5281/zenodo.18525278"

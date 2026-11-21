@@ -1,0 +1,63 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Notebooks
+.ipynb_checkpoints/
+notebooks/.executed/
+
+# Data: keep small fixtures, never commit raw datasets
+data/raw/*
+!data/raw/.gitkeep
+notebooks/data/
+data/processed/
+*.csv
+*.parquet
+*.arff
+*.zip
+!tests/fixtures/*.csv
+!benchmarks/results/*.csv
+
+# Models and checkpoints
+*.ckpt
+*.pt
+*.pth
+*.joblib
+models/
+cache/
+benchmarks/results/notebook/
+
+# LimiX local cache
+.cache/
+cache_limix/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local environment
+.env
+.env.*
+!.env.example
