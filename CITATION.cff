@@ -47,3 +47,9 @@ references:
       - name: "Das, Anmita"
       - name: "Paul, Sushanta"
     doi: "10.5281/zenodo.18525278"
+  - type: dataset
+    title: "Should This Loan be Approved or Denied?"
+    authors:
+      - name: "Toktogaraev, Mirbek"
+    url: "https://www.kaggle.com/datasets/mirbektoktogaraev/should-this-loan-be-approved-or-denied"
+    notes: "U.S. SBA National loan data, CC BY-SA 4.0"

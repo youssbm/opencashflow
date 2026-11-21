@@ -13,10 +13,14 @@ Included datasets
     1,200 anonymised SME loan applications from Bangladesh (Chowdhury, Das and Paul, 2026).
     Structured features, text narratives and a missed-payment label. CC BY 4.0.
     DOI 10.5281/zenodo.18525278.
+``sba``
+    899,164 U.S. SBA-guaranteed loans (Kaggle upload by Toktogaraev, 2020). 21 approval-time
+    features and a charge-off label after removing 1,997 missing targets and post-default columns.
+    CC BY-SA 4.0. No DOI; cite the Kaggle dataset.
 ``synthetic``
     Generated ledgers from :mod:`opencashflow.data.synthetic`, with a documented distress process.
 
-The UCI and Zenodo files are downloaded on demand into ``data/raw`` (or
+The UCI, Zenodo and Kaggle files are downloaded on demand into ``data/raw`` (or
 ``OPENCASHFLOW_DATA_DIR``). Raw data is not redistributed with this repository. Each loader returns
 a :class:`DatasetBundle` carrying source, licence and citation metadata so downstream reports can
 attribute correctly.
@@ -24,6 +28,7 @@ attribute correctly.
 
 from __future__ import annotations
 
+import calendar
 import os
 import shutil
 import time
@@ -34,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 
 from opencashflow.data.schema import normalize_transactions
@@ -47,6 +53,11 @@ BANGLADESH_MIRROR_URL = (
     "https://raw.githubusercontent.com/shoumyac/bd-sme-research/zenodo/data/"
     "bangladesh_sme_1200_records.csv"
 )
+SBA_URL = (
+    "https://www.kaggle.com/api/v1/datasets/download/"
+    "mirbektoktogaraev/should-this-loan-be-approved-or-denied"
+)
+SBA_LICENSE_URL = "https://creativecommons.org/licenses/by-sa/4.0/"
 
 POLISH_DOI = "10.24432/C5F600"
 GERMAN_DOI = "10.24432/C5NC77"
@@ -170,6 +181,74 @@ BANGLADESH_CATEGORICAL = [
     "owner_education",
 ]
 
+NAICS_SECTORS = {
+    "11": "Agriculture, forestry, fishing and hunting",
+    "21": "Mining, quarrying, and oil and gas extraction",
+    "22": "Utilities",
+    "23": "Construction",
+    "31": "Manufacturing",
+    "32": "Manufacturing",
+    "33": "Manufacturing",
+    "42": "Wholesale trade",
+    "44": "Retail trade",
+    "45": "Retail trade",
+    "48": "Transportation and warehousing",
+    "49": "Transportation and warehousing",
+    "51": "Information",
+    "52": "Finance and insurance",
+    "53": "Real estate and rental and leasing",
+    "54": "Professional, scientific, and technical services",
+    "55": "Management of companies and enterprises",
+    "56": "Administrative and support and waste management and remediation services",
+    "61": "Educational services",
+    "62": "Health care and social assistance",
+    "71": "Arts, entertainment, and recreation",
+    "72": "Accommodation and food services",
+    "81": "Other services (except public administration)",
+    "92": "Public administration",
+}
+
+SBA_COLUMNS = [
+    "LoanNr_ChkDgt",
+    "Name",
+    "City",
+    "State",
+    "Zip",
+    "Bank",
+    "BankState",
+    "NAICS",
+    "ApprovalDate",
+    "ApprovalFY",
+    "Term",
+    "NoEmp",
+    "NewExist",
+    "CreateJob",
+    "RetainedJob",
+    "FranchiseCode",
+    "UrbanRural",
+    "RevLineCr",
+    "LowDoc",
+    "ChgOffDate",
+    "DisbursementDate",
+    "DisbursementGross",
+    "BalanceGross",
+    "MIS_Status",
+    "ChgOffPrinGr",
+    "GrAppv",
+    "SBA_Appv",
+]
+
+SBA_CATEGORICAL = [
+    "state",
+    "bank_state",
+    "naics_sector",
+    "new_exist",
+    "urban_rural",
+    "rev_line_cr",
+    "low_doc",
+    "is_franchise",
+]
+
 DATASET_REGISTRY: dict[str, dict[str, Any]] = {
     "polish": {
         "title": "Polish Companies Bankruptcy",
@@ -216,6 +295,25 @@ DATASET_REGISTRY: dict[str, dict[str, Any]] = {
         "features": "27 columns including text narratives",
         "default_rate": "25.25%",
         "task": "binary missed-payment classification",
+    },
+    "sba": {
+        "title": "Should This Loan be Approved or Denied? (SBA National)",
+        "source": "Kaggle / U.S. Small Business Administration",
+        "url": (
+            "https://www.kaggle.com/datasets/mirbektoktogaraev/"
+            "should-this-loan-be-approved-or-denied"
+        ),
+        "doi": "",
+        "license": "CC BY-SA 4.0",
+        "citation": (
+            "Toktogaraev, M. (2020). Should This Loan be Approved or Denied? [Dataset]. "
+            "Kaggle. https://www.kaggle.com/datasets/mirbektoktogaraev/"
+            "should-this-loan-be-approved-or-denied"
+        ),
+        "rows": "899,164",
+        "features": "21 approval-time features after leakage removal",
+        "default_rate": "17.56%",
+        "task": "binary loan charge-off classification",
     },
     "synthetic": {
         "title": "OpenCashFlow synthetic SME portfolio",
@@ -412,6 +510,22 @@ def download_dataset(
         return target
     if key == "synthetic":
         return root
+    if key in {"sba", "sba_loans"}:
+        target = root / "sba" / "SBAnational.csv"
+        if target.is_file() and not force:
+            return target
+        archive = root / "SBAnational.zip"
+        _download_file(SBA_URL, archive)
+        _safe_extract(archive, root / "sba")
+        if not target.is_file():
+            matches = list((root / "sba").rglob("SBAnational.csv"))
+            if not matches:
+                raise DatasetNotAvailableError(
+                    "SBA archive did not contain SBAnational.csv. Download it manually from Kaggle "
+                    "and place it under data/raw/sba/."
+                )
+            target = matches[0]
+        return target
     raise ValueError(f"Unknown dataset {name!r}. Choose from {sorted(DATASET_REGISTRY)}.")
 
 
@@ -664,6 +778,254 @@ def load_bangladesh_sme(
     )
 
 
+def _parse_money(series: pd.Series) -> pd.Series:
+    """Parse SBA dollar strings such as ``$60,000.00`` into float64."""
+    cleaned = series.astype("string").str.replace(r"[\$,\s]", "", regex=True)
+    return pd.to_numeric(cleaned, errors="coerce").astype(float)
+
+
+def _parse_sba_date(series: pd.Series) -> pd.Series:
+    """Parse SBA dates like ``28-Feb-97`` with a 1962-2014 century window.
+
+    Pandas' default ``%y`` pivot maps 68 to 2068, which corrupts the historical range. SBA data
+    starts in 1962 and ends in 2014, so two-digit years up to 14 are 2000s and the rest are 1900s.
+    """
+    text = series.astype("string").str.strip().str.upper()
+    parts = text.str.extract(r"^(\d{1,2})-([A-Z]{3})-(\d{2,4})$")
+    month_map = {calendar.month_abbr[i].upper(): i for i in range(1, 13)}
+    day = pd.to_numeric(parts[0], errors="coerce")
+    month = parts[1].map(month_map)
+    year = pd.to_numeric(parts[2], errors="coerce")
+    year = year.where(year >= 100, np.where(year <= 14, year + 2000, year + 1900))
+    return pd.to_datetime({"year": year, "month": month, "day": day}, errors="coerce")
+
+
+def load_sba_loans(
+    data_dir: str | Path | None = None,
+    *,
+    download: bool = True,
+    max_rows: int | None = None,
+    include_post_approval: bool = False,
+    include_identifiers: bool = False,
+    random_state: int = 42,
+) -> DatasetBundle:
+    """Load the U.S. SBA National loan dataset.
+
+    The source is the Kaggle release "Should This Loan be Approved or Denied?" (899,164 rows,
+    27 columns), built from U.S. Small Business Administration loan data. The target is
+    ``MIS_Status``: ``CHGOFF`` becomes 1 (default) and ``P I F`` becomes 0 (paid in full).
+
+    Args:
+        data_dir: Raw-data directory.
+        download: Download the Kaggle archive if the CSV is missing.
+        max_rows: Optional stratified row cap. Useful for LimiX, which is in-context and expensive
+            on hundreds of thousands of rows.
+        include_post_approval: Keep ``DisbursementGross``, ``BalanceGross`` and ``ChgOffPrinGr``.
+            These columns are only known after approval or after default and **leak the outcome**.
+            Use only for research on servicing-stage models, never for approval-time scoring.
+        include_identifiers: Keep loan id, borrower name, city, zip and bank as non-model columns.
+        random_state: Seed for the stratified row cap.
+
+    Returns:
+        A :class:`DatasetBundle` with approval-time features, a charge-off label and attribution.
+
+    Licence:
+        The Kaggle upload is **CC BY-SA 4.0**. The code in this repository is Apache-2.0, but the
+        data and derived datasets are subject to the share-alike terms. Do not redistribute the raw
+        CSV from this repository. Cite the Kaggle upload and the U.S. SBA.
+    """
+    root = get_data_dir(data_dir)
+    if download:
+        download_dataset("sba", data_dir=root)
+    path = root / "sba" / "SBAnational.csv"
+    if not path.is_file():
+        raise DatasetNotAvailableError(
+            f"{path} is missing. Download the Kaggle archive or call download_dataset('sba')."
+        )
+
+    usecols = [
+        "MIS_Status",
+        "ApprovalDate",
+        "ApprovalFY",
+        "Term",
+        "NoEmp",
+        "NewExist",
+        "CreateJob",
+        "RetainedJob",
+        "FranchiseCode",
+        "UrbanRural",
+        "RevLineCr",
+        "LowDoc",
+        "State",
+        "BankState",
+        "NAICS",
+        "GrAppv",
+        "SBA_Appv",
+    ]
+    if include_post_approval:
+        usecols.extend(["DisbursementGross", "BalanceGross", "ChgOffPrinGr"])
+    if include_identifiers:
+        usecols.extend(["LoanNr_ChkDgt", "Name", "City", "Zip", "Bank"])
+
+    frame = pd.read_csv(path, usecols=usecols, low_memory=False)
+    status = frame["MIS_Status"].astype("string").str.strip().str.upper()
+    valid = status.isin(["P I F", "CHGOFF"])
+    frame = frame.loc[valid].copy()
+    status = status.loc[valid]
+    y = (status == "CHGOFF").astype(int).rename("default_flag")
+
+    approval_date = _parse_sba_date(frame["ApprovalDate"])
+    approval_fy = pd.to_numeric(frame["ApprovalFY"], errors="coerce")
+    approval_fy = approval_fy.fillna(approval_date.dt.year).fillna(0).astype(int)
+    naics_code = (
+        pd.to_numeric(frame["NAICS"], errors="coerce")
+        .fillna(0)
+        .astype("int64")
+        .astype(str)
+        .str.zfill(6)
+    )
+    naics_sector = naics_code.str[:2].map(NAICS_SECTORS).fillna("Unknown")
+    new_exist = (
+        pd.to_numeric(frame["NewExist"], errors="coerce")
+        .map({1.0: "existing", 2.0: "new", 0.0: "unknown"})
+        .fillna("unknown")
+    )
+    urban_rural = (
+        pd.to_numeric(frame["UrbanRural"], errors="coerce")
+        .map({1.0: "urban", 2.0: "rural", 0.0: "undefined"})
+        .fillna("undefined")
+    )
+    rev_line = (
+        frame["RevLineCr"]
+        .astype("string")
+        .str.strip()
+        .str.upper()
+        .map({"Y": "yes", "N": "no", "0": "no"})
+        .fillna("unknown")
+    )
+    low_doc = (
+        frame["LowDoc"]
+        .astype("string")
+        .str.strip()
+        .str.upper()
+        .map({"Y": "yes", "N": "no", "0": "no"})
+        .fillna("unknown")
+    )
+    franchise_raw = pd.to_numeric(frame["FranchiseCode"], errors="coerce").fillna(0)
+    is_franchise = np.where(franchise_raw.isin([0, 1]), "no", "yes")
+    state = frame["State"].astype("string").str.strip().str.upper().fillna("UNKNOWN")
+    bank_state = frame["BankState"].astype("string").str.strip().str.upper().fillna("UNKNOWN")
+
+    term = pd.to_numeric(frame["Term"], errors="coerce").fillna(0).clip(lower=0)
+    employees = pd.to_numeric(frame["NoEmp"], errors="coerce").fillna(0).clip(lower=0)
+    create_job = pd.to_numeric(frame["CreateJob"], errors="coerce").fillna(0).clip(lower=0)
+    retained_job = pd.to_numeric(frame["RetainedJob"], errors="coerce").fillna(0).clip(lower=0)
+    gross_approval = _parse_money(frame["GrAppv"])
+    sba_approval = _parse_money(frame["SBA_Appv"])
+    jobs_supported = create_job + retained_job
+    guarantee_ratio = (
+        (sba_approval / gross_approval)
+        .replace([np.inf, -np.inf], np.nan)
+        .fillna(0.0)
+        .clip(0.0, 1.0)
+    )
+    loan_per_employee = (
+        (gross_approval / (employees + 1)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    )
+    jobs_per_employee = (
+        (jobs_supported / (employees + 1)).replace([np.inf, -np.inf], np.nan).fillna(0.0)
+    )
+
+    data: dict[str, Any] = {
+        "approval_fy": approval_fy,
+        "approval_month": approval_date.dt.month.fillna(0).astype(int),
+        "term_months": term,
+        "term_years": term / 12.0,
+        "employees": employees,
+        "create_job": create_job,
+        "retained_job": retained_job,
+        "jobs_supported": jobs_supported,
+        "gross_approval": gross_approval,
+        "sba_approval": sba_approval,
+        "sba_guarantee_ratio": guarantee_ratio,
+        "loan_per_employee": loan_per_employee,
+        "jobs_per_employee": jobs_per_employee,
+        "state": state,
+        "bank_state": bank_state,
+        "naics_sector": naics_sector,
+        "new_exist": new_exist,
+        "urban_rural": urban_rural,
+        "rev_line_cr": rev_line,
+        "low_doc": low_doc,
+        "is_franchise": is_franchise,
+    }
+    if include_post_approval:
+        data["disbursement_gross"] = _parse_money(frame["DisbursementGross"])
+        data["balance_gross"] = _parse_money(frame["BalanceGross"])
+        data["chargeoff_amount"] = _parse_money(frame["ChgOffPrinGr"])
+    if include_identifiers:
+        data["loan_id"] = frame["LoanNr_ChkDgt"].astype("string")
+        data["borrower_name"] = frame["Name"].astype("string")
+        data["city"] = frame["City"].astype("string")
+        data["zip"] = frame["Zip"].astype("string")
+        data["bank"] = frame["Bank"].astype("string")
+
+    X = pd.DataFrame(data, index=frame.index)
+    if max_rows is not None and max_rows < len(X):
+        if max_rows < 2:
+            raise ValueError("max_rows must be at least 2 for stratified sampling.")
+        from sklearn.model_selection import train_test_split
+
+        X, _, y, _ = train_test_split(
+            X,
+            y,
+            train_size=max_rows,
+            random_state=random_state,
+            stratify=y,
+        )
+    categorical = [column for column in SBA_CATEGORICAL if column in X.columns]
+    for column in categorical:
+        X[column] = X[column].astype("category")
+
+    post_approval_columns = (
+        ["disbursement_gross", "balance_gross", "chargeoff_amount"] if include_post_approval else []
+    )
+    dropped_leakage = ["ChgOffDate", "DisbursementDate"]
+    if not include_post_approval:
+        dropped_leakage.extend(["DisbursementGross", "BalanceGross", "ChgOffPrinGr"])
+
+    metadata = dict(DATASET_REGISTRY["sba"])
+    metadata.update(
+        {
+            "rows_total": len(frame),
+            "rows_used": len(X),
+            "default_rate": float(y.mean()),
+            "approval_fy_min": int(approval_fy.min()),
+            "approval_fy_max": int(approval_fy.max()),
+            "approval_date_min": str(approval_date.min().date()),
+            "approval_date_max": str(approval_date.max().date()),
+            "include_post_approval": include_post_approval,
+            "include_identifiers": include_identifiers,
+            "post_approval_columns": post_approval_columns,
+            "dropped_leakage_columns": dropped_leakage,
+            "license_url": SBA_LICENSE_URL,
+            "share_alike": "CC BY-SA 4.0; derived datasets may require the same licence.",
+            "max_rows": max_rows,
+        }
+    )
+    return DatasetBundle(
+        name="sba",
+        X=X,
+        y=y,
+        target_name="default_flag",
+        categorical_features=categorical,
+        source=metadata["source"],
+        license=metadata["license"],
+        citation=metadata["citation"],
+        metadata=metadata,
+    )
+
+
 def load_synthetic(
     n_companies: int = 120,
     months: int = 24,
@@ -721,7 +1083,8 @@ def load_transactions_csv(
 def load_dataset(name: str, **kwargs: Any) -> DatasetBundle:
     """Load a dataset by registry name.
 
-    Names: ``polish``, ``german``, ``bangladesh_sme`` (or ``bangladesh``), ``synthetic``.
+    Names: ``polish``, ``german``, ``bangladesh_sme`` (or ``bangladesh``), ``sba`` (or
+    ``sba_loans``), ``synthetic``.
     """
     key = name.lower().strip().replace("-", "_")
     if key in {"polish", "polish_bankruptcy"}:
@@ -730,6 +1093,8 @@ def load_dataset(name: str, **kwargs: Any) -> DatasetBundle:
         return load_german_credit(**kwargs)
     if key in {"bangladesh", "bangladesh_sme"}:
         return load_bangladesh_sme(**kwargs)
+    if key in {"sba", "sba_loans", "sba_national"}:
+        return load_sba_loans(**kwargs)
     if key in {"synthetic", "sme_synthetic"}:
         return load_synthetic(**kwargs)
     raise ValueError(f"Unknown dataset {name!r}. Choose from {sorted(DATASET_REGISTRY)}.")
@@ -770,6 +1135,7 @@ __all__ = [
     "load_dataset",
     "load_german_credit",
     "load_polish_bankruptcy",
+    "load_sba_loans",
     "load_synthetic",
     "load_transactions_csv",
 ]

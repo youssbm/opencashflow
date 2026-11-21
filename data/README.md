@@ -36,9 +36,15 @@ python data/download.py --dataset bangladesh_sme --force
 | Polish Companies Bankruptcy | CC BY 4.0 | Tomczak, S. (2016). UCI. https://doi.org/10.24432/C5F600 |
 | Statlog German Credit | CC BY 4.0 | Hofmann, H. (1994). UCI. https://doi.org/10.24432/C5NC77 |
 | Bangladesh SME Credit | CC BY 4.0 data, MIT code | Chowdhury, Das & Paul (2026). Zenodo. https://doi.org/10.5281/zenodo.18525278 |
+| SBA National Loan Data | CC BY-SA 4.0 | Toktogaraev, M. (2020). Kaggle. https://www.kaggle.com/datasets/mirbektoktogaraev/should-this-loan-be-approved-or-denied |
 
 The Bangladesh loader drops `missed_payment_last_12m` because it is an exact restatement of the
-target. See [docs/datasets.md](../docs/datasets.md) for schema notes and benchmark protocol.
+target. The SBA loader drops `ChgOffDate`, `DisbursementGross`, `BalanceGross` and `ChgOffPrinGr`
+for approval-time models because they are only known after approval or default. See
+[docs/datasets.md](../docs/datasets.md) for schema notes and benchmark protocol.
+
+**SBA share-alike:** the Kaggle upload is CC BY-SA 4.0. Do not redistribute the raw CSV, and review
+the share-alike obligations before publishing derived feature datasets.
 
 ## Do not commit
 

@@ -422,7 +422,8 @@ The protocol is deliberately conservative:
 * LimiX receives only the training fold as its in-context reference set;
 * AUC, KS, PR-AUC, Brier and log loss are reported.
 
-The Polish benchmark is omitted here for runtime; run the CLI for all four datasets.
+The Polish and SBA benchmarks are omitted here for runtime; run the CLI for all datasets, including
+the 5k SBA sample documented in `docs/datasets.md`.
 """,
         ),
         (

@@ -16,6 +16,7 @@ from opencashflow.data.loaders import (
     load_dataset,
     load_german_credit,
     load_polish_bankruptcy,
+    load_sba_loans,
     load_synthetic,
     load_transactions_csv,
 )
@@ -48,6 +49,7 @@ __all__ = [
     "download_dataset",
     "get_data_dir",
     "load_polish_bankruptcy",
+    "load_sba_loans",
     "load_german_credit",
     "load_bangladesh_sme",
     "load_synthetic",

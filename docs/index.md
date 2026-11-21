@@ -25,7 +25,7 @@ and compare cash-flow underwriting models without a data-sharing agreement.
 * **Tree and linear baselines** with SHAP explanations, calibration metrics and cost-sensitive
   thresholds.
 * **End-to-end pipeline**: transactions -> features -> PD -> rating -> decision -> reasons.
-* **Three public datasets** plus a synthetic portfolio generator, with licences and citations.
+* **Four public datasets** plus a synthetic portfolio generator, with licences and citations.
 * **Tests, notebooks and a reproducible benchmark suite**.
 
 ## Quick example

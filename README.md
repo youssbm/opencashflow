@@ -50,15 +50,20 @@ transaction pipeline.
 | Synthetic SME portfolio | 300 | **0.857** | **0.857** | 0.842 | 0.783 | 0.853 |
 | German Credit | 1,000 | **0.804** | 0.769 | 0.781 | 0.779 | n/a |
 | Bangladesh SME | 1,200 | **0.928** | 0.894 | 0.893 | 0.895 | n/a |
+| SBA National (5k sample) | 5,000 | **0.976** | 0.957 | 0.959 | 0.837 | n/a |
 | Polish Bankruptcy (1year) | 7,027 | **0.975** | 0.946 | 0.958 | 0.730 | n/a |
 
-LimiX-2 is best or tied on all four datasets under this protocol. On the synthetic transaction
+LimiX-2 is best or tied on all five datasets under this protocol. On the synthetic transaction
 benchmark it ties LightGBM, which is a useful reminder that foundation models are not automatically
 better on every sample.
 
+The SBA row uses a stratified 5,000-row sample because a 20k-row LimiX in-context run is too slow on
+CPU. The loader supports the full 899,164 rows for tree models. See
+[`benchmarks/results/sba`](benchmarks/results/sba) for the saved run.
+
 Read these as an internal, reproducible comparison, not a leaderboard. AUC hides calibration; the
 saved results include KS, PR-AUC, Brier score and log loss. The heuristic scorecard is only defined
-for cash-flow features, so it is not run on the three tabular datasets.
+for cash-flow features, so it is not run on the tabular datasets.
 
 > **Evaluate on a holdout.** Calling `predict` on the same transactions used in `fit` is in-sample
 > and will overstate performance, especially for LimiX's in-context learning. Split by borrower,
@@ -138,6 +143,9 @@ opencashflow download polish german bangladesh_sme
 opencashflow benchmark --datasets german --models logistic,lightgbm
 ```
 
+If the `opencashflow` entry point is not on your PATH after an editable install, use
+`python -m opencashflow.cli` with the same arguments.
+
 ## Feature engine
 
 `CashFlowFeatureExtractor` computes one row per borrower over a configurable window. Every feature is
@@ -189,6 +197,7 @@ print(categorizer.category_summary(labelled))
 | `polish` | Polish Companies Bankruptcy | 7,027 to 10,503 | CC BY 4.0 | [UCI 365](https://archive.ics.uci.edu/dataset/365/polish+companies+bankruptcy+data), DOI 10.24432/C5F600 |
 | `german` | Statlog German Credit | 1,000 | CC BY 4.0 | [UCI 144](https://archive.ics.uci.edu/dataset/144/statlog+german+credit+data), DOI 10.24432/C5NC77 |
 | `bangladesh_sme` | Bangladesh SME Credit | 1,200 | CC BY 4.0 data, MIT code | [Zenodo 18525278](https://zenodo.org/records/18525278), DOI 10.5281/zenodo.18525278 |
+| `sba` | SBA National Loan Data | 899,164 | CC BY-SA 4.0 | [Kaggle](https://www.kaggle.com/datasets/mirbektoktogaraev/should-this-loan-be-approved-or-denied) |
 | `synthetic` | OpenCashFlow synthetic portfolio | configurable | Apache-2.0 | generated locally |
 
 ```bash
@@ -206,6 +215,16 @@ print(bundle.X.shape, bundle.y.mean())
 **Leakage note:** the Bangladesh dataset contains `missed_payment_last_12m`, an exact restatement of
 the target. The loader drops it by default. Keeping it produces AUC 1.0 for every model and teaches
 nothing. See [docs/datasets.md](docs/datasets.md).
+
+**SBA note:** the 899k-row SBA National dataset is U.S. government-guaranteed lending, not European
+open-banking data. The loader keeps 21 approval-time features and drops `ChgOffDate`,
+`DisbursementGross`, `BalanceGross` and `ChgOffPrinGr` by default because they leak the outcome.
+The Kaggle upload is CC BY-SA 4.0, so derived datasets may carry share-alike obligations. For CPU
+LimiX, use a stratified cap:
+
+```python
+sba = load_dataset("sba", max_rows=20_000, random_state=42)
+```
 
 The synthetic generator produces localised ledgers for six European countries with customer
 receipts, payroll, rent, supplier invoices, tax, debt service, card spend and distress events.

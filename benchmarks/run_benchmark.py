@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--output-dir",
         type=Path,
         default=Path(__file__).resolve().parent / "results",
-        help="Directory for CSV and Markdown outputs. Use an empty string to disable.",
+        help="Directory for CSV and Markdown outputs.",
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress progress output.")
     return parser

@@ -36,6 +36,7 @@ data/processed/
 *.zip
 !tests/fixtures/*.csv
 !benchmarks/results/*.csv
+!benchmarks/results/**/*.csv
 
 # Models and checkpoints
 *.ckpt

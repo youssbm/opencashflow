@@ -112,9 +112,11 @@ def _load_benchmark_dataset(
             seed=seed,
         )
         assert isinstance(bundle, DatasetBundle)
+    elif key == "sba":
+        bundle = load_dataset(key, max_rows=max_rows)
     else:
         bundle = load_dataset(key)
-    if max_rows is not None and len(bundle.X) > max_rows:
+    if max_rows is not None and key != "sba" and len(bundle.X) > max_rows:
         X, _, y, _ = train_test_split(
             bundle.X,
             bundle.y,

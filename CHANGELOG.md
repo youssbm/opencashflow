@@ -24,8 +24,8 @@ All notable changes to OpenCashFlow are documented here. The format follows
 * TreeSHAP, occlusion and additive explanations with adverse-action style reason codes.
 * End-to-end `CashFlowPipeline` with policy decisions, expected loss, reason codes and joblib
   persistence.
-* Loaders for Polish Companies Bankruptcy, German Credit and Bangladesh SME, with licences, DOIs,
-  citations and leakage protection.
+* Loaders for Polish Companies Bankruptcy, German Credit, Bangladesh SME and the 899k-row U.S. SBA
+  National loan dataset, with licences, citations, leakage protection and share-alike notices.
 * Optional macro-context joiner with country lags and year-on-year changes.
 * Benchmark harness comparing LimiX-2 with tree, linear and heuristic baselines on stratified folds.
 * 200+ tests, including opt-in LimiX integration tests.
@@ -37,7 +37,8 @@ All notable changes to OpenCashFlow are documented here. The format follows
 ### Known limitations
 
 * Public SME datasets are tabular accounting/application data, not transaction ledgers; only the
-  synthetic portfolio exercises the full cash-flow pipeline end to end.
+  synthetic portfolio exercises the full cash-flow pipeline end to end. The SBA dataset is U.S.
+  government-guaranteed lending and carries CC BY-SA 4.0 share-alike terms.
 * LimiX-2 weights are non-commercial and are not bundled.
 * The policy thresholds are illustrative, not calibrated to a lender's risk appetite.
 * Explanations are model-relative and not causal.

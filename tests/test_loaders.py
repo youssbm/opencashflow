@@ -16,8 +16,10 @@ from opencashflow.data.loaders import (
     get_data_dir,
     list_datasets,
     load_bangladesh_sme,
+    load_dataset,
     load_german_credit,
     load_polish_bankruptcy,
+    load_sba_loans,
     load_transactions_csv,
 )
 
@@ -132,6 +134,211 @@ def test_bangladesh_loader_drops_leakage(tmp_path):
     assert "missed_payment_last_12m" in leaked.X.columns
 
 
+def _write_sba(root: Path) -> Path:
+    directory = root / "sba"
+    directory.mkdir(parents=True)
+    rows = [
+        {
+            "LoanNr_ChkDgt": "1001",
+            "Name": "ALPHA CAFE",
+            "City": "AUSTIN",
+            "State": "TX",
+            "Zip": "78701",
+            "Bank": "BANK A",
+            "BankState": "TX",
+            "NAICS": "722410",
+            "ApprovalDate": "28-Feb-97",
+            "ApprovalFY": "1997",
+            "Term": "84",
+            "NoEmp": "4",
+            "NewExist": "2",
+            "CreateJob": "0",
+            "RetainedJob": "4",
+            "FranchiseCode": "1",
+            "UrbanRural": "1",
+            "RevLineCr": "N",
+            "LowDoc": "N",
+            "ChgOffDate": "",
+            "DisbursementDate": "28-Feb-97",
+            "DisbursementGross": "$60,000.00",
+            "BalanceGross": "$0.00",
+            "MIS_Status": "P I F",
+            "ChgOffPrinGr": "$0.00",
+            "GrAppv": "$60,000.00",
+            "SBA_Appv": "$48,000.00",
+        },
+        {
+            "LoanNr_ChkDgt": "1002",
+            "Name": "BETA RETAIL",
+            "City": "DENVER",
+            "State": "CO",
+            "Zip": "80202",
+            "Bank": "BANK B",
+            "BankState": "CO",
+            "NAICS": "451120",
+            "ApprovalDate": "04-Oct-89",
+            "ApprovalFY": "1989",
+            "Term": "60",
+            "NoEmp": "10",
+            "NewExist": "1",
+            "CreateJob": "2",
+            "RetainedJob": "5",
+            "FranchiseCode": "0",
+            "UrbanRural": "2",
+            "RevLineCr": "Y",
+            "LowDoc": "Y",
+            "ChgOffDate": "01-Jan-95",
+            "DisbursementDate": "04-Oct-89",
+            "DisbursementGross": "$100,000.00",
+            "BalanceGross": "$25,000.00",
+            "MIS_Status": "CHGOFF",
+            "ChgOffPrinGr": "$25,000.00",
+            "GrAppv": "$100,000.00",
+            "SBA_Appv": "$75,000.00",
+        },
+        {
+            "LoanNr_ChkDgt": "1003",
+            "Name": "GAMMA WORKS",
+            "City": "SEATTLE",
+            "State": "WA",
+            "Zip": "98101",
+            "Bank": "BANK C",
+            "BankState": "WA",
+            "NAICS": "311812",
+            "ApprovalDate": "15-Jun-14",
+            "ApprovalFY": "2014",
+            "Term": "120",
+            "NoEmp": "0",
+            "NewExist": "2",
+            "CreateJob": "1",
+            "RetainedJob": "0",
+            "FranchiseCode": "78760",
+            "UrbanRural": "0",
+            "RevLineCr": "0",
+            "LowDoc": "C",
+            "ChgOffDate": "",
+            "DisbursementDate": "15-Jun-14",
+            "DisbursementGross": "$250,000.00",
+            "BalanceGross": "$0.00",
+            "MIS_Status": "P I F",
+            "ChgOffPrinGr": "$0.00",
+            "GrAppv": "$250,000.00",
+            "SBA_Appv": "$187,500.00",
+        },
+        {
+            "LoanNr_ChkDgt": "1004",
+            "Name": "DELTA SERVICES",
+            "City": "BOSTON",
+            "State": "MA",
+            "Zip": "02108",
+            "Bank": "BANK D",
+            "BankState": "MA",
+            "NAICS": "541110",
+            "ApprovalDate": "01-Jan-02",
+            "ApprovalFY": "2002",
+            "Term": "240",
+            "NoEmp": "25",
+            "NewExist": "1",
+            "CreateJob": "0",
+            "RetainedJob": "10",
+            "FranchiseCode": "1",
+            "UrbanRural": "1",
+            "RevLineCr": "N",
+            "LowDoc": "N",
+            "ChgOffDate": "01-Jan-10",
+            "DisbursementDate": "01-Jan-02",
+            "DisbursementGross": "$500,000.00",
+            "BalanceGross": "$100,000.00",
+            "MIS_Status": "CHGOFF",
+            "ChgOffPrinGr": "$100,000.00",
+            "GrAppv": "$500,000.00",
+            "SBA_Appv": "$350,000.00",
+        },
+        {
+            "LoanNr_ChkDgt": "1005",
+            "Name": "EPSILON UNKNOWN",
+            "City": "MIAMI",
+            "State": "FL",
+            "Zip": "33101",
+            "Bank": "BANK E",
+            "BankState": "FL",
+            "NAICS": "000000",
+            "ApprovalDate": "02-Mar-10",
+            "ApprovalFY": "2010",
+            "Term": "36",
+            "NoEmp": "1",
+            "NewExist": "1",
+            "CreateJob": "0",
+            "RetainedJob": "0",
+            "FranchiseCode": "1",
+            "UrbanRural": "1",
+            "RevLineCr": "N",
+            "LowDoc": "N",
+            "ChgOffDate": "",
+            "DisbursementDate": "02-Mar-10",
+            "DisbursementGross": "$10,000.00",
+            "BalanceGross": "$0.00",
+            "MIS_Status": "",
+            "ChgOffPrinGr": "$0.00",
+            "GrAppv": "$10,000.00",
+            "SBA_Appv": "$8,000.00",
+        },
+    ]
+    path = directory / "SBAnational.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+def test_sba_loader_from_local_fixture(tmp_path):
+    _write_sba(tmp_path)
+    bundle = load_sba_loans(data_dir=tmp_path, download=False)
+    assert bundle.X.shape[0] == 4
+    assert bundle.y.tolist() == [0, 1, 0, 1]
+    assert bundle.metadata["rows_total"] == 4
+    assert bundle.metadata["default_rate"] == pytest.approx(0.5)
+    assert bundle.metadata["approval_date_min"] == "1989-10-04"
+    assert bundle.metadata["approval_date_max"] == "2014-06-15"
+    assert "ChgOffPrinGr" in bundle.metadata["dropped_leakage_columns"]
+    assert "disbursement_gross" not in bundle.X.columns
+    assert "loan_id" not in bundle.X.columns
+    assert bundle.X.loc[0, "naics_sector"] == "Accommodation and food services"
+    assert bundle.X.loc[1, "naics_sector"] == "Retail trade"
+    assert bundle.X.loc[2, "naics_sector"] == "Manufacturing"
+    assert bundle.X.loc[2, "is_franchise"] == "yes"
+    assert bundle.X.loc[0, "sba_guarantee_ratio"] == pytest.approx(0.8)
+    assert bundle.X.loc[1, "rev_line_cr"] == "yes"
+    assert bundle.X.loc[2, "low_doc"] == "unknown"
+    assert str(bundle.X["state"].dtype) == "category"
+
+
+def test_sba_post_approval_and_identifiers(tmp_path):
+    _write_sba(tmp_path)
+    bundle = load_sba_loans(
+        data_dir=tmp_path,
+        download=False,
+        include_post_approval=True,
+        include_identifiers=True,
+    )
+    assert {"disbursement_gross", "balance_gross", "chargeoff_amount"} <= set(bundle.X.columns)
+    assert {"loan_id", "borrower_name", "city", "zip", "bank"} <= set(bundle.X.columns)
+    assert bundle.metadata["post_approval_columns"] == [
+        "disbursement_gross",
+        "balance_gross",
+        "chargeoff_amount",
+    ]
+
+
+def test_sba_row_cap_and_dispatch(tmp_path):
+    _write_sba(tmp_path)
+    capped = load_sba_loans(data_dir=tmp_path, download=False, max_rows=2, random_state=1)
+    assert len(capped.X) == 2
+    assert set(capped.y.unique()) == {0, 1}
+    with pytest.raises(ValueError, match="max_rows"):
+        load_sba_loans(data_dir=tmp_path, download=False, max_rows=1)
+    dispatched = load_dataset("sba", data_dir=tmp_path, download=False, max_rows=2)
+    assert len(dispatched.X) == 2
+
+
 def test_transactions_csv_loader(tmp_path):
     path = tmp_path / "transactions.csv"
     pd.DataFrame(
@@ -154,8 +361,8 @@ def test_bundle_validation():
 
 def test_registry_and_data_dir(tmp_path):
     frame = list_datasets()
-    assert set(DATASET_REGISTRY) == {"polish", "german", "bangladesh_sme", "synthetic"}
-    assert len(frame) == 4
+    assert set(DATASET_REGISTRY) == {"polish", "german", "bangladesh_sme", "sba", "synthetic"}
+    assert len(frame) == 5
     assert "license" in frame.columns
     resolved = get_data_dir(tmp_path / "raw")
     assert resolved.is_dir()
@@ -198,3 +405,17 @@ def test_real_bangladesh_dataset():
     bundle = load_bangladesh_sme(download=False)
     assert bundle.X.shape[0] == 1200
     assert bundle.metadata["dropped_leakage_columns"] == ["missed_payment_last_12m"]
+
+
+@pytest.mark.skipif(
+    not _real_data_path("sba", "SBAnational.csv").is_file(),
+    reason="SBA dataset not downloaded",
+)
+def test_real_sba_dataset():
+    bundle = load_sba_loans(download=False)
+    assert bundle.X.shape == (897_167, 21)
+    assert bundle.y.mean() == pytest.approx(0.1756, abs=0.001)
+    assert bundle.metadata["rows_total"] == 897_167
+    assert "disbursement_gross" not in bundle.X.columns
+    assert "ChgOffPrinGr" in bundle.metadata["dropped_leakage_columns"]
+    assert bundle.metadata["approval_date_min"] < bundle.metadata["approval_date_max"]

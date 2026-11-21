@@ -1,6 +1,6 @@
 # Datasets
 
-OpenCashFlow ships loaders for three public credit-risk datasets and one generator for
+OpenCashFlow ships loaders for four public credit-risk datasets and one generator for
 transaction-level SME ledgers. Raw data is downloaded on demand and never redistributed with the
 repository.
 
@@ -9,6 +9,7 @@ repository.
 | `polish` | Polish Companies Bankruptcy | 7,027 (1year) to 10,503 (3year) | 64 financial ratios | 3.9% to 6.9% | CC BY 4.0 | [10.24432/C5F600](https://doi.org/10.24432/C5F600) |
 | `german` | Statlog German Credit | 1,000 | 20 application attributes | 30.0% | CC BY 4.0 | [10.24432/C5NC77](https://doi.org/10.24432/C5NC77) |
 | `bangladesh_sme` | Bangladesh SME Credit | 1,200 | 19 tabular (plus 4 text) | 25.25% | CC BY 4.0 data, MIT code | [10.5281/zenodo.18525278](https://doi.org/10.5281/zenodo.18525278) |
+| `sba` | SBA National Loan Data | 899,164 | 21 approval-time | 17.56% | CC BY-SA 4.0 | [Kaggle](https://www.kaggle.com/datasets/mirbektoktogaraev/should-this-loan-be-approved-or-denied) |
 | `synthetic` | OpenCashFlow synthetic portfolio | configurable | 151 cash-flow features | configurable | Apache-2.0 | this repository |
 
 ## Quick download
@@ -16,6 +17,7 @@ repository.
 ```bash
 python data/download.py --list
 python data/download.py --dataset polish german bangladesh_sme
+python data/download.py --dataset sba
 python data/download.py --dataset all --data-dir ./data/raw
 ```
 
@@ -35,6 +37,7 @@ from opencashflow.data.loaders import load_dataset
 polish = load_dataset("polish", variant="1year")
 german = load_dataset("german", decode=True)
 bangladesh = load_dataset("bangladesh_sme")
+sba = load_dataset("sba", max_rows=20_000)
 synthetic = load_dataset("synthetic", n_companies=300, months=20)
 
 print(polish.summary())
@@ -88,6 +91,41 @@ Every loader returns a `DatasetBundle` with `X`, `y`, `categorical_features`, `s
 * **Mirror:** Zenodo may reject automated requests with HTTP 403. The loader falls back to the
   authors' GitHub mirror and records the fallback in `data/raw/bangladesh_sme_SOURCE.txt`.
 
+## SBA National loan data
+
+* **Source:** Kaggle, "Should This Loan be Approved or Denied?" uploaded by Mirbek Toktogaraev and
+  built from U.S. Small Business Administration loan data.
+* **Citation:** Toktogaraev, M. (2020). *Should This Loan be Approved or Denied?* [Dataset].
+  Kaggle. https://www.kaggle.com/datasets/mirbektoktogaraev/should-this-loan-be-approved-or-denied
+* **Licence:** CC BY-SA 4.0. This is a **share-alike** licence. The OpenCashFlow code remains
+  Apache-2.0, but derived datasets may need to be shared under CC BY-SA 4.0. Consult your legal team
+  before redistributing feature matrices built from these rows.
+* **Content:** 899,164 SBA-guaranteed loans, 27 raw columns, approval dates from 1962 to 2014.
+  The target is `MIS_Status`: `CHGOFF` = 1 (default), `P I F` = 0 (paid in full). 1,997 rows have a
+  missing target and are dropped, leaving 897,167 rows and a 17.56% default rate.
+* **Approval-time features:** the loader keeps 21 columns: approval fiscal year and month, term,
+  employees, jobs created/retained, gross and SBA-approved amounts, SBA guarantee ratio, loan per
+  employee, jobs per employee, state, bank state, NAICS sector, new/existing business, urban/rural,
+  revolving line of credit, LowDoc flag and franchise flag.
+* **Leakage removal:** `ChgOffDate`, `DisbursementDate`, `DisbursementGross`, `BalanceGross` and
+  `ChgOffPrinGr` are dropped by default. `DisbursementGross`, `BalanceGross` and `ChgOffPrinGr` are
+  only known after approval or after default and would leak the outcome. Enable
+  `include_post_approval=True` only for servicing-stage research, never for approval-time scoring.
+* **Identifiers:** borrower name, city, zip, bank and loan id are excluded from `X` by default.
+  Use `include_identifiers=True` for auditing, not modelling.
+* **Size:** 899k rows x 21 features is too large for CPU in-context LimiX. Use a stratified cap:
+
+  ```python
+  bundle = load_dataset("sba", max_rows=20_000, random_state=42)
+  ```
+
+  The cap is applied after the target and leakage cleaning, so the default rate is preserved.
+* **Date handling:** the raw dates are `DD-Mon-YY`. The loader uses a 1962-2014 century window so
+  `68` becomes 1968, not 2068. `ApprovalFY` values such as `1976A` fall back to the parsed date.
+* **Caveats:** this is U.S. government-guaranteed lending, not European open-banking data. It is a
+  useful external benchmark for credit-risk modelling, not a test of SEPA categorisation or
+  cash-flow features.
+
 ## Synthetic SME ledgers
 
 ```python
@@ -124,6 +162,8 @@ The saved results in `benchmarks/results/` use:
 * the same folds for every model;
 * preprocessing fitted inside each training fold;
 * LimiX-2 with one ensemble pipeline on CPU (`n_pipelines=1`) to keep the benchmark reproducible;
+* for the 899k-row SBA data, a stratified sample (documented with the result) rather than the full
+  ledger; the saved SBA run uses 5,000 rows because a 20k-row CPU LimiX run is too slow;
 * no test-fold information used for feature selection or calibration.
 
 Reproduce with:
@@ -134,6 +174,15 @@ python benchmarks/run_benchmark.py \
   --models heuristic,logistic,lightgbm,xgboost,limix \
   --cv 3 --synthetic-companies 300 --synthetic-months 20 --limix-pipelines 1
 ```
+
+For SBA:
+
+```bash
+python benchmarks/run_benchmark.py --datasets sba \
+  --models logistic,lightgbm,xgboost,limix --cv 3 --max-rows 5000 --limix-pipelines 1
+```
+
+Saved results: `benchmarks/results/` and `benchmarks/results/sba/`.
 
 Metrics: ROC-AUC, KS, PR-AUC, Brier score and log loss. AUC is the primary ranking metric; Brier and
 log loss expose calibration problems that AUC hides.
@@ -163,4 +212,5 @@ When publishing results, include:
 3. row count, feature count and default rate;
 4. fold count and random seed;
 5. model name and, for LimiX, the checkpoint and code commits plus the non-commercial licence;
-6. any preprocessing that differs from the loaders in this repository.
+6. any preprocessing that differs from the loaders in this repository;
+7. for SBA, the stratified row cap and the CC BY-SA 4.0 share-alike notice.

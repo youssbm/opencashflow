@@ -223,6 +223,7 @@ Implementation notes:
 | Polish Companies Bankruptcy | `load_polish_bankruptcy` | CC BY 4.0 | 64 ratios, 5 horizons, DOI 10.24432/C5F600 |
 | German Credit | `load_german_credit` | CC BY 4.0 | 20 attributes, cost matrix 5:1, DOI 10.24432/C5NC77 |
 | Bangladesh SME | `load_bangladesh_sme` | CC BY 4.0 (data), MIT (code) | 1,200 rows, DOI 10.5281/zenodo.18525278, leakage column dropped |
+| SBA National | `load_sba_loans` | CC BY-SA 4.0 | 899,164 rows, 21 approval-time features, post-default columns dropped, share-alike |
 | Synthetic | `load_synthetic` | Apache-2.0 | generated locally, documented distress process |
 
 * Download with `python data/download.py --dataset all` or the `opencashflow download` CLI.
@@ -230,6 +231,10 @@ Implementation notes:
 * Zenodo blocks some automated downloads with HTTP 403. The loader falls back to the authors'
   GitHub mirror and writes `bangladesh_sme_SOURCE.txt`; the canonical DOI remains the citation.
 * Do not redistribute raw datasets in this repository. Point to the source instead.
+* The SBA upload is CC BY-SA 4.0. Do not add its raw CSV to the repository, and note the share-alike
+  terms when publishing derived datasets.
+* For SBA, drop `ChgOffDate`, `DisbursementGross`, `BalanceGross` and `ChgOffPrinGr` for
+  approval-time models. They are post-approval/post-default columns and leak the outcome.
 * When adding a dataset: implement a loader, add a `DATASET_REGISTRY` entry with licence and
   citation, add a fixture-based test, and update `docs/datasets.md`.
 * Macro indicators must be lagged to the scoring date. Use `MacroFeatureJoiner` rather than joining
