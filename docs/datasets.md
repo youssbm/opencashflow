@@ -54,7 +54,8 @@ Every loader returns a `DatasetBundle` with `X`, `y`, `categorical_features`, `s
   https://doi.org/10.24432/C5F600. CC BY 4.0.
 * **Content:** 64 financial ratios computed from EMIS financial statements. Bankrupt companies
   span 2000-2012; operating companies span 2007-2013.
-* **Horizons:** `1year` predicts bankruptcy within one year; `5year` predicts within five years.
+* **Horizons:** `1year` (UCI "1stYear" file) uses first-year ratios and labels bankruptcy five years
+  later; `5year` (UCI "5thYear" file) labels bankruptcy one year later.
   The loader supports `1year` to `5year` and `all` (concatenated with a `horizon_years` column).
 * **Primary benchmark:** `1year`, 7,027 rows, 3.9% bankrupt. See
   [the main results](../benchmarks/results/benchmark_summary.md).
