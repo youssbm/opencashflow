@@ -133,6 +133,47 @@ _DATE_COMPONENTS = re.compile(r"(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{1,4})")
 _ISO_DATE = re.compile(r"\d{4}-\d{1,2}-\d{1,2}")
 
 
+def _parse_dates(values: pd.Series, dayfirst: bool) -> pd.Series:
+    """Parse a raw date column one explicit format at a time.
+
+    Year-first values (``2024-03-05``, ``2024/03/05``) are read year-first whatever ``dayfirst`` is.
+    Numeric ``d/m/y`` values follow ``dayfirst``. Other text falls back to pandas inference. Passing
+    each format explicitly keeps the result the same across pandas versions.
+
+    Args:
+        values: Raw date column, as read from the source file.
+        dayfirst: True when numeric dates put the day first.
+
+    Returns:
+        Datetime series with the index of ``values``. Unparseable values are NaT.
+    """
+    if pd.api.types.is_datetime64_any_dtype(values):
+        return pd.to_datetime(values, errors="coerce")
+    text = values.astype("string").str.strip().reset_index(drop=True)
+    present = text.notna()
+    year_first = (text.str.match(r"\d{4}[/\-.]\d{1,2}[/\-.]\d{1,2}") & present).fillna(False)
+    four_digit = (text.str.fullmatch(r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{4}") & present).fillna(False)
+    two_digit = (text.str.fullmatch(r"\d{1,2}[/\-.]\d{1,2}[/\-.]\d{2}") & present).fillna(False)
+    other = present & ~year_first & ~four_digit & ~two_digit
+    year_first = year_first.astype(bool)
+    four_digit = four_digit.astype(bool)
+    two_digit = two_digit.astype(bool)
+    result = np.full(len(text), np.datetime64("NaT", "ns"), dtype="datetime64[ns]")
+    if year_first.any():
+        parsed = pd.to_datetime(text[year_first], format="mixed", dayfirst=False, errors="coerce")
+        result[year_first.to_numpy()] = parsed.to_numpy(dtype="datetime64[ns]")
+    for mask, year_code in ((four_digit, "%Y"), (two_digit, "%y")):
+        if mask.any():
+            cleaned = text[mask].str.replace(r"[.\-]", "/", regex=True)
+            fmt = f"%d/%m/{year_code}" if dayfirst else f"%m/%d/{year_code}"
+            parsed = pd.to_datetime(cleaned, format=fmt, errors="coerce")
+            result[mask.to_numpy()] = parsed.to_numpy(dtype="datetime64[ns]")
+    if other.any():
+        parsed = pd.to_datetime(text[other], format="mixed", dayfirst=dayfirst, errors="coerce")
+        result[other.to_numpy()] = parsed.to_numpy(dtype="datetime64[ns]")
+    return pd.Series(result, index=values.index, name=values.name)
+
+
 def _infer_dayfirst(values: pd.Series) -> tuple[bool, bool]:
     """Infer day-first parsing from raw date values.
 
@@ -416,9 +457,9 @@ def normalize_transactions(
                 "Ambiguous dates were parsed month-first; EU exports should pass dayfirst=True.",
                 stacklevel=2,
             )
-    # format="mixed" parses each value independently: ISO dates stay year-first and day/month
-    # values honour the inferred dayfirst, so a column mixing both formats loses no valid rows.
-    out["date"] = pd.to_datetime(df[date_col], dayfirst=dayfirst, format="mixed", errors="coerce")
+    # Each value is parsed with an explicit format, so a column mixing ISO and day/month dates
+    # loses no valid rows and the result does not depend on the installed pandas version.
+    out["date"] = _parse_dates(df[date_col], dayfirst=bool(dayfirst))
     out["amount"] = df[amount_col].map(parse_amount)
     if currency_col:
         raw_currency = df[currency_col]

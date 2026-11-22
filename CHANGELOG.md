@@ -45,7 +45,7 @@ First public release.
 
 * Direction-specific categorisation rules are consulted when no direction is supplied; `direction="any"` no longer skips them.
 * LimiX imputation replaces only missing cells and returns observed cells unchanged. A cell LimiX leaves as NaN falls back to the training median with a `UserWarning`.
-* `parse_amount` reads a single separator after a zero integer part as decimal and rejects repeated separators unless every group after the first has three digits. Mixed-format date columns are parsed per value so ISO and day-first dates both survive. Missing currency values default to the configured currency with one warning.
+* `parse_amount` reads a single separator after a zero integer part as decimal and rejects repeated separators unless every group after the first has three digits. Mixed-format date columns are parsed per value with explicit formats, so ISO and day-first dates both survive and the result does not depend on the pandas version. Missing currency values default to the configured currency with one warning.
 * `LogisticBaseline` keeps all-NaN numeric and categorical columns as constant columns during imputation instead of dropping them.
 * The missing-balance-account warning is emitted when an account has transactions but no balance rows, even if only one account of the entity has balances.
 * Occlusion gives a NaN contribution to features whose reference value is NaN; reason codes ignore it.
