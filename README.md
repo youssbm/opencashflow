@@ -98,11 +98,19 @@ Reason codes are model-relative statements. They are not causal claims and not r
 
 ## Quick start
 
+Requires Python 3.10 or newer. OpenCashFlow is not on PyPI yet, so install it from the repository. The install command must run inside the cloned folder.
+
 ```bash
+git clone https://github.com/youssbm/opencashflow
+cd opencashflow
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
+source .venv/bin/activate        # Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install -e ".[trees,dev]"
 ```
+
+On Windows, if PowerShell blocks the activation script, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once. On macOS, use `python3` if `python` is not found.
+
+Then run the example:
 
 ```python
 from opencashflow.data.synthetic import generate_portfolio
@@ -131,6 +139,8 @@ SME0030    0.970920      G  decline
 SME0117    0.969357      G  decline
 120 companies, mean PD 11.7%, approval rate 85.8%, decisions {'accept': 103, 'decline': 14, 'review': 3}
 ```
+
+The run may also print a SHAP `UserWarning` about LightGBM output. It does not change the results.
 
 `as_of` fixes the scoring date. Without it, each company is scored at its latest transaction date and a warning is raised, which is not point-in-time. With no labels, use the untrained scorecard:
 
