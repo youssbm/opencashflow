@@ -23,7 +23,7 @@ First public release.
 * Loaders for Polish Companies Bankruptcy, German Credit, Bangladesh SME and the 899k-row U.S. SBA National loan dataset, with licences, citations, leakage protection and share-alike notices. The SBA loader takes inclusive `approval_fy_min` and `approval_fy_max` vintage filters.
 * Optional macro-context joiner with country lags (`publication_lag`, default 1 month) and year-on-year changes.
 * Benchmark harness comparing LimiX-2 with tree, linear and heuristic baselines on stratified folds, with repeats, an out-of-time split, feature exclusion, variants, interval and `predict_seconds` columns. The CLI exposes the same options.
-* 347 tests in the fast suite (`pytest -q`). Five LimiX integration tests run with `OPENCASHFLOW_RUN_LIMIX=1`.
+* Fast test suite (`pytest -q`) that passes on a clean checkout. Dataset-dependent tests and five LimiX integration tests skip unless their data or checkpoint is present (`OPENCASHFLOW_RUN_LIMIX=1` runs the LimiX tests).
 * Three notebooks: feature engineering, LimiX scoring, and benchmarks.
 * Documentation: feature dictionary, dataset notes, LimiX guide, architecture, quickstart and transaction guide.
 * Project metadata and URLs point to https://github.com/youssbm/opencashflow. `CITATION.cff` cites the SBA study.

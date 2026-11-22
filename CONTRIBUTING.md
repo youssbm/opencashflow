@@ -17,7 +17,8 @@ source .venv/bin/activate        # Windows: .venv\Scripts\Activate.ps1
 python -m pip install -e ".[trees,dev]"
 ```
 
-Run the fast suite and lint. The fast suite has 347 tests and should pass locally. The lint command
+Run the fast suite and lint. The fast suite should pass on a clean checkout (343 tests, with 9 skipped
+when the downloaded datasets and the LimiX checkpoint are absent). The lint command
 uses the CI scope, `opencashflow`, `tests` and `benchmarks`:
 
 ```bash
@@ -155,7 +156,7 @@ python -m nbconvert --to notebook --execute --inplace --ExecutePreprocessor.time
 
 ## Release checklist
 
-1. `python -m pytest -q` passes (347 tests).
+1. `python -m pytest -q` passes (343 tests on a clean checkout, 347 with the datasets downloaded).
 2. LimiX tests pass on a machine with the checkpoint (`OPENCASHFLOW_RUN_LIMIX=1`).
 3. `python -m ruff check opencashflow tests benchmarks` passes.
 4. Regenerate the benchmarks and commit the results under `benchmarks/results/`, including

@@ -309,7 +309,7 @@ opencashflow/
 │   ├── pipeline.py      # end-to-end underwriting and persistence
 │   ├── benchmark.py     # cross-validated benchmark harness
 │   └── cli.py           # `opencashflow` command line
-├── tests/               # 347 tests pass, LimiX tests opt-in
+├── tests/               # fast suite, plus opt-in LimiX tests
 ├── notebooks/           # feature engineering, LimiX scoring, benchmarks
 ├── benchmarks/          # benchmark CLI and saved results
 ├── docs/                # feature dictionary, datasets, LimiX, architecture, examples
@@ -319,8 +319,9 @@ opencashflow/
 
 ## Testing
 
-The fast suite has 347 passing tests. Five LimiX integration tests are skipped unless
-`OPENCASHFLOW_RUN_LIMIX=1` is set and the checkpoint and source are present.
+On a clean checkout the fast suite passes 343 tests and skips 9: five LimiX integration tests,
+which need `OPENCASHFLOW_RUN_LIMIX=1` and the checkpoint and source, and four tests that need the
+datasets downloaded into `data/raw`. With the datasets in place, 347 tests pass.
 
 ```bash
 python -m pytest -q
