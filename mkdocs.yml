@@ -1,6 +1,6 @@
 site_name: OpenCashFlow
 site_description: Cash-flow underwriting for SME credit risk
-repo_url: https://github.com/opencashflow/opencashflow
+repo_url: https://github.com/youssbm/opencashflow
 theme:
   name: material
   features:

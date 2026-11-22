@@ -9,10 +9,13 @@ import pytest
 from opencashflow.data.synthetic import (
     TEMPLATES,
     CompanyProfile,
+    _ledger_outcomes,
+    _transaction,
     generate_company_transactions,
     generate_credit_dataset,
     generate_portfolio,
 )
+from opencashflow.features.cashflow_features import CashFlowFeatureExtractor, FeatureConfig
 from opencashflow.features.categorizer import TransactionCategorizer
 
 
@@ -63,6 +66,10 @@ def test_portfolio_labels_and_metadata(portfolio):
     assert 0 < portfolio.labels["default_flag"].mean() < 1
     assert "companies" in portfolio.summary()
     assert portfolio.metadata["n_companies"] == 30
+    assert portfolio.metadata["outcome_months"] == 12
+    assert "observation_end" in portfolio.metadata
+    assert " to " in portfolio.metadata["outcome_window"]
+    assert len(portfolio.outcome_transactions) > 0
 
 
 def test_to_features_alignment(portfolio):
@@ -71,6 +78,20 @@ def test_to_features_alignment(portfolio):
     assert X.index.equals(y.index)
     assert set(y.unique()) <= {0, 1}
     assert X["txn_count"].min() > 0
+
+
+def test_to_features_pins_point_in_time_cutoff(portfolio):
+    config = FeatureConfig(window_days=730)
+    as_of = portfolio.metadata["observation_end"]
+    expected = CashFlowFeatureExtractor(config=config).fit_transform(
+        portfolio.transactions, as_of=as_of
+    )
+    X, y = portfolio.to_features()
+    pd.testing.assert_frame_equal(X, expected.reindex(X.index))
+    expected_y = (
+        portfolio.labels.set_index("entity_id")["default_flag"].reindex(X.index).astype(int)
+    )
+    pd.testing.assert_series_equal(y, expected_y)
 
 
 def test_credit_dataset_helper():
@@ -120,3 +141,101 @@ def test_no_nan_in_core_transaction_columns(company_transactions):
         assert company_transactions[column].notna().all()
     assert np.isfinite(company_transactions["amount"]).all()
     assert np.isfinite(company_transactions["balance"]).all()
+
+
+def test_forward_window_split(portfolio):
+    end = pd.Timestamp(portfolio.metadata["observation_end"])
+    observable = portfolio.transactions
+    outcome = portfolio.outcome_transactions
+    assert len(outcome) > 0
+    assert list(outcome.columns) == list(observable.columns)
+    assert (observable["date"] < end + pd.Timedelta(days=1)).all()
+    assert (outcome["date"] > end).all()
+    assert outcome["date"].dt.to_period("M").nunique() == portfolio.metadata["outcome_months"]
+
+
+def test_forward_window_literal_dates(portfolio):
+    assert portfolio.metadata["observation_end"] == "2024-04-30"
+    assert portfolio.metadata["outcome_window"] == "2024-05 to 2025-04"
+    observable = portfolio.transactions
+    outcome = portfolio.outcome_transactions
+    assert observable["date"].max() <= pd.Timestamp("2024-04-30")
+    assert outcome["date"].min() >= pd.Timestamp("2024-05-01")
+    assert sorted(outcome["date"].dt.to_period("M").astype(str).unique()) == [
+        "2024-05",
+        "2024-06",
+        "2024-07",
+        "2024-08",
+        "2024-09",
+        "2024-10",
+        "2024-11",
+        "2024-12",
+        "2025-01",
+        "2025-02",
+        "2025-03",
+        "2025-04",
+    ]
+
+
+def test_labels_match_outcome_rows(portfolio):
+    profiles = [CompanyProfile(entity_id=eid) for eid in portfolio.labels["entity_id"]]
+    outcomes = _ledger_outcomes(portfolio.outcome_transactions, profiles)
+    revenue = portfolio.labels["monthly_revenue"].to_numpy(dtype=float)
+    np.testing.assert_allclose(
+        outcomes["min_balance"].to_numpy(dtype=float) / revenue,
+        portfolio.labels["min_balance_ratio"].to_numpy(dtype=float),
+    )
+    np.testing.assert_allclose(
+        outcomes["negative_month_ratio"].to_numpy(dtype=float),
+        portfolio.labels["negative_month_ratio"].to_numpy(dtype=float),
+    )
+    np.testing.assert_allclose(
+        outcomes["nsf_count"].to_numpy(dtype=float),
+        portfolio.labels["nsf_count"].to_numpy(dtype=float),
+    )
+
+
+def test_nsf_count_uses_exact_templates():
+    date = pd.Timestamp("2024-01-01")
+    descriptions = [
+        "INTERNAL TRANSFER FROM OWN ACCOUNT",
+        "TRANSFERENCIA RECIBIDA FACTURA 202401001 DE Casa Verde",
+        *(TEMPLATES[country]["nsf"] for country in sorted(TEMPLATES)),
+    ]
+    rows = [
+        _transaction(date + pd.Timedelta(days=i), -100.0, desc, "Bank", "EUR")
+        for i, desc in enumerate(descriptions)
+    ]
+    ledger = pd.DataFrame(rows)
+    ledger["entity_id"] = "TEST"
+    ledger["transaction_id"] = [f"TEST-{i:03d}" for i in range(len(ledger))]
+    ledger["balance"] = -100.0 * (np.arange(len(ledger)) + 1.0)
+    outcomes = _ledger_outcomes(ledger, [CompanyProfile(entity_id="TEST")])
+    assert outcomes.loc["TEST", "nsf_count"] == 6
+
+
+def test_features_ignore_outcome_rows(portfolio):
+    as_of = portfolio.metadata["observation_end"]
+    config = FeatureConfig(window_days=5000)
+    X_observable = CashFlowFeatureExtractor(config=config).fit_transform(
+        portfolio.transactions, as_of=as_of
+    )
+    combined = pd.concat(
+        [portfolio.transactions, portfolio.outcome_transactions], ignore_index=True
+    )
+    X_combined = CashFlowFeatureExtractor(config=config).fit_transform(combined, as_of=as_of)
+    pd.testing.assert_frame_equal(X_observable, X_combined)
+
+
+def test_portfolio_is_deterministic():
+    first = generate_portfolio(n_companies=8, months=6, default_rate=0.25, seed=77)
+    second = generate_portfolio(n_companies=8, months=6, default_rate=0.25, seed=77)
+    pd.testing.assert_frame_equal(first.labels, second.labels)
+    pd.testing.assert_frame_equal(first.transactions, second.transactions)
+    pd.testing.assert_frame_equal(first.outcome_transactions, second.outcome_transactions)
+
+
+@pytest.mark.parametrize("bad_outcome_months", [0, 2])
+def test_outcome_months_validation(bad_outcome_months):
+    with pytest.raises(ValueError, match="outcome_months"):
+        generate_portfolio(n_companies=2, months=3, outcome_months=bad_outcome_months)

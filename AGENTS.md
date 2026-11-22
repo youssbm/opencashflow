@@ -98,19 +98,19 @@ python -m venv .venv
 python -m pip install -e ".[trees,dev]"
 ```
 
-### LimiX on this Windows CPU machine
+### LimiX on a Windows CPU machine
 
-The working local install is:
+The paths below are per-machine examples. Substitute the locations of your own install:
 
-* code: `C:\Users\youss\Documents\Code\tabularFM_tests\limix_src` at `a917fa0`
-* checkpoint: `C:\Users\youss\Documents\Code\tabularFM_tests\cache_limix\LimiX-2-1016.ckpt`
-* configs: `C:\Users\youss\Documents\Code\tabularFM_tests\limix_src\config`
+* code: `<path-to>\limix_src` at `a917fa0`
+* checkpoint: `<path-to>\LimiX-2-1016.ckpt`
+* configs: `<path-to>\limix_src\config`
 
-Set these before running LimiX tests or notebooks:
+Set these before running LimiX tests or notebooks (PowerShell syntax):
 
 ```powershell
-$env:LIMIX_MODEL_PATH="C:\Users\youss\Documents\Code\tabularFM_tests\cache_limix\LimiX-2-1016.ckpt"
-$env:LIMIX_SRC="C:\Users\youss\Documents\Code\tabularFM_tests\limix_src"
+$env:LIMIX_MODEL_PATH="<path-to>\LimiX-2-1016.ckpt"
+$env:LIMIX_SRC="<path-to>\limix_src"
 ```
 
 LimiX imports `triton` even on CPU. `opencashflow.models.limix_scorer` installs a no-op shim when
@@ -124,7 +124,8 @@ triton is absent. Do not remove it unless the target machine has a GPU and match
 
 | Column | Meaning |
 |---|---|
-| `entity_id` | Borrower/account identifier |
+| `entity_id` | Borrower or company identifier. Account-level identifiers go to `account_id`. If a source has only account-level identifiers, the account becomes the entity and a warning is raised. |
+| `account_id` | Optional bank account identifier. Always present in normalised output, NA when the source has no account column. |
 | `transaction_id` | Unique row id |
 | `date` | Normalised booking date |
 | `amount` | Signed amount, positive = credit |
@@ -138,6 +139,8 @@ triton is absent. Do not remove it unless the target machine has a GPU and match
 Rules:
 
 * Zero amounts are `outflow` for direction purposes and are dropped by the synthetic generator.
+* An entity with more than one currency raises `TransactionSchemaError`. Convert amounts to one
+  currency before scoring. No FX conversion is performed.
 * Unsigned exports require a direction column. If neither signed amounts nor a direction column are
   present, raise rather than guessing.
 * `parse_amount` handles `1.234,56`, `1,234.56`, currency symbols and accounting parentheses.
@@ -207,6 +210,8 @@ Implementation notes:
 * `n_pipelines=1` is about 1 s per small dataset on CPU. Do not run 32 members on CPU for tests.
 * Classification returns `(n, n_classes)` probabilities in sorted class order.
 * `predict_pd` requires exactly two classes and returns the column for class `1` when present.
+* `softmax_temperature` defaults to 0.9 for classification (the benchmark setting) and to 1.0 for
+  regression (the leaderboard setting). Pass it explicitly to override.
 * Imputation uses `reg_default_noretrieval_MVI_v2.json`, not the classification config. LimiX
   returns train rows followed by query rows; the wrapper slices the query block.
 * Categorical columns are ordinal-encoded using categories learned during `fit`. Unseen categories
@@ -233,8 +238,10 @@ Implementation notes:
 * Do not redistribute raw datasets in this repository. Point to the source instead.
 * The SBA upload is CC BY-SA 4.0. Do not add its raw CSV to the repository, and note the share-alike
   terms when publishing derived datasets.
-* For SBA, drop `ChgOffDate`, `DisbursementGross`, `BalanceGross` and `ChgOffPrinGr` for
-  approval-time models. They are post-approval/post-default columns and leak the outcome.
+* For SBA approval-time models, exclude `ChgOffDate`, `DisbursementDate`, `DisbursementGross`,
+  `BalanceGross` and `ChgOffPrinGr`. `ChgOffDate` and `DisbursementDate` are never loaded for
+  approval-time models. The other three are loaded only with `include_post_approval=True`, which is
+  for servicing research. All five are post-approval/post-default columns and leak the outcome.
 * When adding a dataset: implement a loader, add a `DATASET_REGISTRY` entry with licence and
   citation, add a fixture-based test, and update `docs/datasets.md`.
 * Macro indicators must be lagged to the scoring date. Use `MacroFeatureJoiner` rather than joining

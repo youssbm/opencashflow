@@ -42,8 +42,7 @@ representing the community in public spaces.
 
 ## Enforcement
 
-Instances of abusive, harassing or otherwise unacceptable behaviour may be reported to the project
-maintainers. All complaints will be reviewed and investigated promptly and fairly. Maintainers are
+Instances of abusive, harassing or otherwise unacceptable behaviour may be reported privately through this repository's security advisory feature (Security tab), or to the maintainer on GitHub (@youssbm). All complaints will be reviewed and investigated promptly and fairly. Maintainers are
 obligated to respect the privacy and security of the reporter.
 
 ## Enforcement guidelines

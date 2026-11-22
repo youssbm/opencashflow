@@ -11,6 +11,7 @@ Usage::
 from __future__ import annotations
 
 from opencashflow.data.synthetic import generate_portfolio
+from opencashflow.features.cashflow_features import FeatureConfig
 from opencashflow.pipeline import CashFlowPipeline
 
 
@@ -22,17 +23,18 @@ def main() -> None:
         seed=42,
     )
     print(portfolio.summary())
+    as_of = portfolio.metadata.get("observation_end") or portfolio.transactions["date"].max()
 
     for scorer in ("heuristic", "lightgbm"):
-        pipeline = CashFlowPipeline(scorer=scorer)
+        pipeline = CashFlowPipeline(scorer=scorer, config=FeatureConfig(as_of=as_of))
         pipeline.fit(portfolio.transactions, portfolio.labels)
-        scored = pipeline.predict(portfolio.transactions, top_k=3, ead=25_000)
+        scored = pipeline.predict(portfolio.transactions, as_of=as_of, top_k=3, ead=25_000)
         summary = pipeline.portfolio_summary(scored)
         print(f"\n{scorer}: {summary}")
         columns = ["pd", "rating", "decision", "reason_1"]
         print(scored[columns].head(5).to_string())
 
-    explanations = pipeline.explain(portfolio.transactions, max_rows=2)
+    explanations = pipeline.explain(portfolio.transactions, as_of=as_of, max_rows=2)
     for explanation in explanations:
         print(f"\nEntity {explanation.entity_id}: PD={explanation.prediction:.3f}")
         for reason in explanation.reason_codes(3):

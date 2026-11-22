@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import re
+
 import pandas as pd
 import pytest
 
 from opencashflow.features.categorizer import (
     CATEGORY_DESCRIPTIONS,
+    INFLOW_CATEGORIES,
+    RETURNED_PAYMENT_PATTERN,
     TransactionCategorizer,
     normalize_text,
 )
@@ -210,3 +214,111 @@ def test_every_category_has_description():
         "other_outflow",
     }
     assert all(CATEGORY_DESCRIPTIONS.values())
+
+
+NSF_EXAMPLES = [
+    ("DE", "LASTSCHRIFT NICHT AUSGEFUEHRT UNGENUEGENDE DECKUNG"),
+    ("FR", "PRELEVEMENT IMPAYE"),
+    ("PL", "PRZELEW ODRZUCONY"),
+    ("IT", "ADDEBITO RIFIUTATO"),
+    ("NL", "TERUGGEBOEKT ONVOLDOENDE SALDO"),
+    ("ES", "RECIBO DEVUELTO"),
+    ("EN", "RETURNED PAYMENT"),
+]
+
+
+@pytest.mark.parametrize(("language", "description"), NSF_EXAMPLES)
+def test_returned_payment_examples_are_nsf_and_match_pattern(language, description):
+    match = TransactionCategorizer().categorize(description, "outflow")
+    assert match.category == "nsf", f"{language}: {description!r} -> {match.category}"
+    assert re.search(RETURNED_PAYMENT_PATTERN, normalize_text(description)), language
+
+
+def test_social_contributions_are_payroll():
+    categorizer = TransactionCategorizer()
+    assert categorizer.categorize("URSSAF BEITRAEGE MAI 2025", "outflow").category == "payroll"
+    assert categorizer.categorize("ZUS SKLADKI", "outflow").category == "payroll"
+    assert categorizer.categorize("FINANZAMT STEUER 2024", "outflow").category == "tax"
+
+
+def test_capital_injection_is_equity_injection():
+    categorizer = TransactionCategorizer()
+    assert (
+        categorizer.categorize("CAPITAL INJECTION SHAREHOLDER", "inflow").category
+        == "equity_injection"
+    )
+    assert categorizer.categorize("SHAREHOLDER LOAN", "inflow").category == "loan_proceeds"
+    assert "equity_injection" in CATEGORY_DESCRIPTIONS
+    assert "equity_injection" in INFLOW_CATEGORIES
+
+
+def test_categorize_without_direction_uses_direction_rules():
+    categorizer = TransactionCategorizer()
+    no_direction = categorizer.categorize("LOHN MAI 2026")
+    with_outflow = categorizer.categorize("LOHN MAI 2026", "outflow")
+    assert no_direction.category == "payroll"
+    assert with_outflow.category == "payroll"
+
+
+def test_categorize_without_direction_matches_inflow_category():
+    categorizer = TransactionCategorizer()
+    narrative = "SEPA CREDIT TRANSFER FROM ACME INVOICE 42"
+    no_direction = categorizer.categorize(narrative)
+    with_inflow = categorizer.categorize(narrative, "inflow")
+    # The revenue rule (priority 25) fires before the transfer_in rule (priority 40).
+    assert no_direction.category == "revenue"
+    assert with_inflow.category == "revenue"
+
+
+RETURN_VOCABULARY_CASES = [
+    # (language, narrative, direction, expected category, marked as a return)
+    ("EN", "RETURNED PAYMENT", "outflow", "nsf", True),
+    ("EN", "REFUND CUSTOMER", "inflow", "refund", False),
+    ("DE", "LASTSCHRIFT NICHT EINGELOEST", "outflow", "nsf", True),
+    ("DE", "LASTSCHRIFT NICHT AUSGEFUEHRT", "outflow", "nsf", True),
+    ("DE", "ZURUECKGEBUCHT LASTSCHRIFT", "outflow", "nsf", True),
+    ("DE", "RUECKERSTATTUNG LIEFERANT", "inflow", "refund", False),
+    ("FR", "PRELEVEMENT IMPAYE", "outflow", "nsf", True),
+    ("FR", "PRELEVEMENT REJETE", "outflow", "nsf", True),
+    ("FR", "REMBOURSEMENT FOURNISSEUR", "inflow", "refund", False),
+    ("PL", "PRZELEW ODRZUCONY", "outflow", "nsf", True),
+    ("PL", "ZWROT FAKTURA", "inflow", "refund", False),
+    ("IT", "ADDEBITO RIFIUTATO", "outflow", "nsf", True),
+    ("IT", "RIMBORSO FORNITORE", "inflow", "refund", False),
+    ("NL", "TERUGGEBOEKT ONVOLDOENDE SALDO", "outflow", "nsf", True),
+    ("NL", "GEWEIGERD BETALING", "outflow", "nsf", True),
+    ("NL", "RESTITUTIE LEVERANCIER", "inflow", "refund", False),
+    ("ES", "RECIBO DEVUELTO", "outflow", "nsf", True),
+    ("ES", "PAGO RECHAZADO", "outflow", "nsf", True),
+    ("ES", "DEVOLUCION PROVEEDOR", "inflow", "refund", False),
+]
+
+
+@pytest.mark.parametrize(
+    ("language", "narrative", "direction", "expected", "is_return"), RETURN_VOCABULARY_CASES
+)
+def test_return_vocabulary_agrees_with_nsf_rule(
+    language, narrative, direction, expected, is_return
+):
+    match = TransactionCategorizer().categorize(narrative, direction)
+    assert match.category == expected, f"{language}: {narrative!r} -> {match.category}"
+    is_nsf = match.category == "nsf"
+    matches_pattern = bool(re.search(RETURNED_PAYMENT_PATTERN, normalize_text(narrative)))
+    if is_nsf:
+        assert matches_pattern, f"{language}: nsf without pattern match: {narrative!r}"
+    if is_return:
+        assert is_nsf and matches_pattern, f"{language}: return mismatch: {narrative!r}"
+
+
+@pytest.mark.parametrize("narrative", ["ZWROT FAKTURA", "RESTITUTIE LEVERANCIER"])
+def test_ambiguous_refund_words_are_not_nsf(narrative):
+    # Direction "any" still checks the outflow-only nsf rule after the F5-A fix.
+    match = TransactionCategorizer().categorize(narrative, "any")
+    assert match.category == "refund", f"{narrative!r} -> {match.category}"
+    assert match.method == "rule"
+
+
+def test_zwrot_matches_pattern_but_is_a_refund():
+    text = normalize_text("ZWROT FAKTURA")
+    assert re.search(RETURNED_PAYMENT_PATTERN, text)
+    assert TransactionCategorizer().categorize("ZWROT FAKTURA", "any").category == "refund"

@@ -16,12 +16,7 @@ python -m pip install -e ".[trees,dev]"
 ```python
 from opencashflow.data.synthetic import generate_portfolio
 
-portfolio = generate_portfolio(
-    n_companies=120,
-    months=20,
-    default_rate=0.15,
-    seed=42,
-)
+portfolio = generate_portfolio(n_companies=120, months=20, seed=42)
 print(portfolio.summary())
 ```
 
@@ -31,9 +26,11 @@ print(portfolio.summary())
 ## 3. Score with the no-training scorecard
 
 ```python
+from opencashflow.features.cashflow_features import FeatureConfig
 from opencashflow.pipeline import CashFlowPipeline
 
-pipeline = CashFlowPipeline(scorer="heuristic")
+config = FeatureConfig(as_of=portfolio.metadata["observation_end"])
+pipeline = CashFlowPipeline(config=config, scorer="heuristic")
 pipeline.fit(portfolio.transactions, portfolio.labels)
 scored = pipeline.predict(portfolio.transactions, top_k=3)
 
@@ -42,15 +39,26 @@ print(pipeline.portfolio_summary(scored))
 ```
 
 The heuristic scorer is a fixed, explainable cash-flow scorecard. It needs no labels, which makes it
-useful for a first look and for demos.
+useful for a first look and for demos. On synthetic data it is not an independent baseline, because
+its risk drivers overlap with the label's.
 
 ## 4. Fit a tree baseline
 
 ```python
-pipeline = CashFlowPipeline(scorer="lightgbm")
+from opencashflow.features.cashflow_features import FeatureConfig
+from opencashflow.pipeline import CashFlowPipeline
+
+config = FeatureConfig(as_of=portfolio.metadata["observation_end"])
+pipeline = CashFlowPipeline(config=config, scorer="lightgbm")
 pipeline.fit(portfolio.transactions, portfolio.labels)
 scored = pipeline.predict(portfolio.transactions, top_k=3, ead=25_000)
+print(scored[["pd", "rating", "decision", "reason_1"]].head())
+print(pipeline.portfolio_summary(scored))
 ```
+
+`as_of` fixes the scoring date so that features use only transactions on or before that date. Without
+it, the extractor falls back to each borrower's latest transaction date, which leaks future
+information for historical scoring and breaks out-of-time validation.
 
 `ead` adds an expected-loss column using PD x LGD (45% by default) x EAD. The result is sorted by
 descending PD.
@@ -82,7 +90,7 @@ export LIMIX_SRC=/path/to/LimiX
 ```
 
 ```python
-pipeline = CashFlowPipeline(scorer="limix")
+pipeline = CashFlowPipeline(config=config, scorer="limix")
 pipeline.fit(portfolio.transactions, portfolio.labels)
 scored = pipeline.predict(portfolio.transactions, top_k=3)
 ```
@@ -107,10 +115,12 @@ reloads lazily.
 python benchmarks/run_benchmark.py \
   --datasets synthetic,german,bangladesh_sme,polish \
   --models heuristic,logistic,lightgbm,xgboost,limix \
-  --cv 3 --synthetic-companies 300 --synthetic-months 20 --limix-pipelines 1
+  --cv 3 --repeats 2 --synthetic-companies 300 --synthetic-months 20 \
+  --limix-pipelines 1 --output-dir benchmarks/results
 ```
 
-Results are written to `benchmarks/results/`. Read the dataset notes before interpreting them:
+Results are written to `benchmarks/results/`. Without `--output-dir` the script prints results and
+writes nothing. Read the dataset notes before interpreting them:
 [Datasets](../datasets.md).
 
 ## Next steps

@@ -7,13 +7,16 @@ explicit column mapping produces the most reliable results.
 
 | Column | Required | Notes |
 |---|---|---|
-| `entity_id` | Recommended | Borrower, company or account identifier |
+| `entity_id` | Recommended | Company or borrower identifier; account-level identifiers go to `account_id` |
+| `account_id` | Optional | Always present in the normalised output; NA when the source has no account column |
+| `transaction_id` | Optional | Unique row id; generated when absent |
 | `date` | Yes | Booking or value date |
 | `amount` | Yes | Signed, positive = credit |
 | `description` | Yes | Narrative, memo or remittance information |
 | `counterparty` | Optional | Merchant, payer or payee |
 | `balance` | Optional | Running balance after the transaction |
 | `currency` | Optional | ISO code, default EUR |
+| `direction` | Optional | `inflow` or `outflow`, derived from the signed amount |
 | `category` | Optional | Pre-labelled category; NA triggers categorisation |
 
 ## Mapping a CSV
@@ -42,16 +45,44 @@ If `amount` is always positive and a separate column says credit/debit, pass
 `amount_is_signed=False`. The direction column values may be `credit`/`debit`, `CR`/`DR`,
 `inflow`/`outflow` or common numeric indicators.
 
-`parse_amount` handles:
+## Dates
 
-* `1.234,56` and `1,234.56`,
-* currency symbols and ISO codes,
-* spaces as thousands separators,
-* accounting parentheses for negatives,
-* trailing minus signs.
+`dayfirst` defaults to `None`, which infers the date order. A first date component above 12 selects
+day-first; a second component above 12 selects month-first. If neither applies, an ambiguous non-ISO
+date is read month-first and a UserWarning is raised. ISO dates (YYYY-MM-DD) never warn. A column that
+mixes ISO and day-first dates parses completely. Pass `dayfirst=True` for EU exports when ambiguous
+dates are present.
 
-Rows with unparseable dates or amounts are dropped with a warning. If more than 25% of rows are
-invalid, the loader raises instead of silently destroying the ledger.
+## Amounts
+
+`parse_amount` applies these separator rules:
+
+* Both "." and "," present: the last one is the decimal separator. `1.234,56` and `1,234.56` both
+  give 1234.56.
+* One separator kind repeated: every group after the first must have three digits. `1.234.567`
+  gives 1234567; `1.234.56` gives NaN.
+* One separator once, followed by exactly three digits: thousands, except when the integer part is 0.
+  `1.234` gives 1234; `0.001` gives 0.001.
+* One separator once, otherwise: decimal. `12.00` gives 12.0; `12,50` gives 12.5.
+
+Currency symbols and accounting parentheses for negatives are also handled.
+
+Rows with an unparseable date or amount are dropped with a warning that gives the count. If more than
+25 percent of rows are invalid, normalisation raises a `TransactionSchemaError` instead of dropping
+them.
+
+## Identifiers
+
+Company-level identifiers take precedence for `entity_id`. A blank company cell falls back to the
+account identifier for that row; `None`, NaN, the empty string, `nan` and `none` all count as blank.
+If an export has only account-level identifiers, the account becomes the entity and a UserWarning is
+raised.
+
+## Currency
+
+An entity must have one currency. An entity with more than one currency raises a
+`TransactionSchemaError`. No FX conversion is performed, so convert amounts to one currency before
+normalisation.
 
 ## Categorise
 

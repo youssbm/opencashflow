@@ -3,10 +3,10 @@ message: "If you use this software, please cite it as below."
 type: software
 title: "OpenCashFlow: Cash-flow underwriting for SME credit risk"
 version: 0.1.0
-date-released: 2026-11-21
+date-released: 2026-11-22
 license: Apache-2.0
-repository-code: "https://github.com/opencashflow/opencashflow"
-url: "https://github.com/opencashflow/opencashflow"
+repository-code: "https://github.com/youssbm/opencashflow"
+url: "https://github.com/youssbm/opencashflow"
 abstract: >-
   An open-source cash-flow underwriting toolkit for B2B and SME credit risk. It turns
   open-banking-style transactions into 151 documented cash-flow features, probability-of-default
@@ -21,6 +21,9 @@ keywords:
   - tabular foundation model
   - LimiX
 authors:
+  - family-names: "Ben Mahmoud"
+    given-names: "Youssef"
+    alias: "youssbm"
   - name: "OpenCashFlow contributors"
     affiliation: "Open source community"
 references:
@@ -41,11 +44,10 @@ references:
       - name: "Hofmann, Hans"
     doi: "10.24432/C5NC77"
   - type: dataset
-    title: "Structured Data Suffices: Machine Learning for SME Credit Risk Assessment in an Emerging Market"
+    title: "Structured Data Suffices: Machine Learning for SME Credit Risk Assessment in an Emerging Market - Dataset and Analysis Code"
     authors:
       - name: "Chowdhury, Shoumya"
       - name: "Das, Anmita"
-      - name: "Paul, Sushanta"
     doi: "10.5281/zenodo.18525278"
   - type: dataset
     title: "Should This Loan be Approved or Denied?"
@@ -53,3 +55,19 @@ references:
       - name: "Toktogaraev, Mirbek"
     url: "https://www.kaggle.com/datasets/mirbektoktogaraev/should-this-loan-be-approved-or-denied"
     notes: "U.S. SBA National loan data, CC BY-SA 4.0"
+  - type: article
+    title: "Should This Loan be Approved or Denied?: A Large Dataset with Class Assignment Guidelines"
+    authors:
+      - family-names: "Li"
+        given-names: "Min"
+      - family-names: "Mickel"
+        given-names: "Amy"
+      - family-names: "Taylor"
+        given-names: "Stanley"
+    journal: "Journal of Statistics Education"
+    volume: "26"
+    issue: "1"
+    start: 55
+    end: 66
+    year: 2018
+    doi: "10.1080/10691898.2018.1434342"

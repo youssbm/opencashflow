@@ -10,7 +10,7 @@ Included datasets
     label. CC BY 4.0. DOI 10.24432/C5NC77. The official cost matrix is 5:1 for approving a bad
     borrower versus rejecting a good one.
 ``bangladesh_sme``
-    1,200 anonymised SME loan applications from Bangladesh (Chowdhury, Das and Paul, 2026).
+    1,200 anonymised SME loan applications from Bangladesh (Chowdhury and Das, 2026).
     Structured features, text narratives and a missed-payment label. CC BY 4.0.
     DOI 10.5281/zenodo.18525278.
 ``sba``
@@ -88,6 +88,8 @@ GERMAN_COLUMNS = [
     "foreign_worker",
     "credit_risk",
 ]
+
+GERMAN_PROTECTED_ATTRIBUTES = ["personal_status_sex", "age_years", "foreign_worker"]
 
 GERMAN_CODEBOOK: dict[str, dict[str, str]] = {
     "checking_status": {
@@ -249,6 +251,16 @@ SBA_CATEGORICAL = [
     "is_franchise",
 ]
 
+# Columns of the source file that leak the outcome for approval-time scoring. ChgOffDate and
+# DisbursementDate are never loaded; the other three load only with include_post_approval=True.
+SBA_LEAKAGE_COLUMNS = [
+    "ChgOffDate",
+    "DisbursementDate",
+    "DisbursementGross",
+    "BalanceGross",
+    "ChgOffPrinGr",
+]
+
 DATASET_REGISTRY: dict[str, dict[str, Any]] = {
     "polish": {
         "title": "Polish Companies Bankruptcy",
@@ -287,7 +299,7 @@ DATASET_REGISTRY: dict[str, dict[str, Any]] = {
         "doi": BANGLADESH_DOI,
         "license": "CC BY 4.0 (data), MIT (code)",
         "citation": (
-            "Chowdhury, S., Das, A., & Paul, S. (2026). Structured Data Suffices: Machine Learning "
+            "Chowdhury, S., & Das, A. (2026). Structured Data Suffices: Machine Learning "
             "for SME Credit Risk Assessment in an Emerging Market - Dataset and Analysis Code. "
             "Zenodo. https://doi.org/10.5281/zenodo.18525278"
         ),
@@ -425,7 +437,7 @@ def _download_file(url: str, destination: Path, *, timeout: int = 120, retries: 
     request = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "OpenCashFlow/0.1 (+https://github.com/opencashflow/opencashflow)",
+            "User-Agent": "OpenCashFlow/0.1 (+https://github.com/youssbm/opencashflow)",
             "Accept": "*/*",
         },
     )
@@ -576,6 +588,12 @@ def load_polish_bankruptcy(
 
     Returns:
         A :class:`DatasetBundle` with 64 ratio features named ``Attr1`` to ``Attr64``.
+
+    Duplicate rows:
+        The published 1-year file has 164 rows in exact duplicate feature groups (82 pairs), all
+        for non-bankrupt firms. They are kept so the benchmark does not change silently. The number
+        of rows belonging to a duplicate group is recorded in
+        ``metadata['duplicate_feature_rows']``.
     """
     key = variant.lower().replace("_", "").replace("-", "")
     if key != "all" and key not in POLISH_VARIANTS:
@@ -610,6 +628,7 @@ def load_polish_bankruptcy(
             "horizon_years": None if key == "all" else 6 - int(key[0]),
             "positive_rate": float(y.mean()),
             "missing_values": int(X.isna().sum().sum()),
+            "duplicate_feature_rows": int(X.duplicated(keep=False).sum()),
         }
     )
     return DatasetBundle(
@@ -639,6 +658,7 @@ def load_german_credit(
     download: bool = True,
     numeric: bool = False,
     decode: bool = True,
+    exclude_protected: bool = False,
 ) -> DatasetBundle:
     """Load the UCI Statlog German Credit dataset.
 
@@ -648,9 +668,17 @@ def load_german_credit(
         numeric: Use ``german.data-numeric`` (24 numeric attributes) instead of the original
             20-attribute version.
         decode: Map coded categories such as ``A34`` to readable labels.
+        exclude_protected: Drop ``personal_status_sex``, ``age_years`` and ``foreign_worker`` from
+            ``X`` and from the categorical list.
 
     Returns:
         A :class:`DatasetBundle` with the positive class being "bad credit risk".
+
+    Protected attributes:
+        ``personal_status_sex``, ``age_years`` and ``foreign_worker`` can act as proxies for sex,
+        age and nationality. Using them in lending decisions may breach fair-lending rules in some
+        jurisdictions. Review before use. The bundle records them under
+        ``metadata['protected_attributes']`` whether or not they are excluded.
     """
     root = get_data_dir(data_dir)
     if download:
@@ -682,11 +710,16 @@ def load_german_credit(
         X = frame.drop(columns="credit_risk")
         y = (frame["credit_risk"] == 2).astype(int)
         categorical = [c for c in X.columns if not pd.api.types.is_numeric_dtype(X[c])]
+    if exclude_protected:
+        X = X.drop(columns=[c for c in GERMAN_PROTECTED_ATTRIBUTES if c in X.columns])
+        categorical = [c for c in categorical if c not in GERMAN_PROTECTED_ATTRIBUTES]
     metadata = dict(DATASET_REGISTRY["german"])
     metadata.update(
         {
             "numeric": numeric,
             "decoded": decode,
+            "exclude_protected": exclude_protected,
+            "protected_attributes": list(GERMAN_PROTECTED_ATTRIBUTES),
             "cost_matrix": GERMAN_COST_MATRIX,
             "positive_rate": float(y.mean()),
         }
@@ -724,6 +757,11 @@ def load_bangladesh_sme(
 
     Returns:
         A :class:`DatasetBundle` with a missed-payment label and the provided train/test split.
+
+    Target definition:
+        ``target_missed_payment`` records whether the borrower missed any scheduled payment in the
+        12 months after disbursement, following the upstream README. This is broader than a
+        90-days-past-due default.
     """
     root = get_data_dir(data_dir)
     if download:
@@ -760,6 +798,15 @@ def load_bangladesh_sme(
             "include_text": include_text,
             "include_leakage": include_leakage,
             "dropped_leakage_columns": dropped_leakage,
+            "target_definition": (
+                "missed any scheduled payment in the 12 months after disbursement (upstream README)"
+            ),
+            "source_branch": "zenodo",
+            "source_note": (
+                "Zenodo may return HTTP 403 to automated downloads, in which case the loader uses "
+                "the authors' GitHub mirror. The upstream main README and the zenodo branch differ "
+                "on authors and on the data period, so the citation follows the Zenodo record."
+            ),
             "positive_rate": float(y.mean()),
             "provided_split": split.value_counts().to_dict() if split is not None else None,
         }
@@ -805,6 +852,8 @@ def load_sba_loans(
     *,
     download: bool = True,
     max_rows: int | None = None,
+    approval_fy_min: int | None = None,
+    approval_fy_max: int | None = None,
     include_post_approval: bool = False,
     include_identifiers: bool = False,
     random_state: int = 42,
@@ -820,6 +869,11 @@ def load_sba_loans(
         download: Download the Kaggle archive if the CSV is missing.
         max_rows: Optional stratified row cap. Useful for LimiX, which is in-context and expensive
             on hundreds of thousands of rows.
+        approval_fy_min: Inclusive lower bound on the parsed ``approval_fy`` column.
+        approval_fy_max: Inclusive upper bound on the parsed ``approval_fy`` column. Use
+            ``approval_fy_max`` to restrict to older vintages whose outcomes have had time to
+            mature, for example to test out-of-time behaviour. The cut-off is a judgement and must
+            be reported.
         include_post_approval: Keep ``DisbursementGross``, ``BalanceGross`` and ``ChgOffPrinGr``.
             These columns are only known after approval or after default and **leak the outcome**.
             Use only for research on servicing-stage models, never for approval-time scoring.
@@ -828,6 +882,15 @@ def load_sba_loans(
 
     Returns:
         A :class:`DatasetBundle` with approval-time features, a charge-off label and attribution.
+
+    Leakage:
+        Five source columns are excluded from the approval-time feature matrix and are listed in
+        ``metadata['dropped_leakage_columns']``. ``ChgOffDate`` is a post-approval charge-off date
+        and is never loaded. ``DisbursementDate`` is a post-approval disbursement date and is never
+        loaded. ``DisbursementGross`` is a post-approval amount and loads only with
+        ``include_post_approval=True``. ``BalanceGross`` is a post-default balance and loads only
+        with ``include_post_approval=True``. ``ChgOffPrinGr`` is the post-default charge-off
+        principal and loads only with ``include_post_approval=True``.
 
     Licence:
         The Kaggle upload is **CC BY-SA 4.0**. The code in this repository is Apache-2.0, but the
@@ -877,6 +940,18 @@ def load_sba_loans(
     approval_date = _parse_sba_date(frame["ApprovalDate"])
     approval_fy = pd.to_numeric(frame["ApprovalFY"], errors="coerce")
     approval_fy = approval_fy.fillna(approval_date.dt.year).fillna(0).astype(int)
+    if approval_fy_min is not None or approval_fy_max is not None:
+        keep = pd.Series(True, index=frame.index)
+        if approval_fy_min is not None:
+            keep &= approval_fy >= approval_fy_min
+        if approval_fy_max is not None:
+            keep &= approval_fy <= approval_fy_max
+        frame = frame.loc[keep].copy()
+        approval_date = approval_date.loc[keep]
+        approval_fy = approval_fy.loc[keep]
+        y = y.loc[keep]
+    if approval_fy.empty:
+        raise ValueError("No SBA rows remain after applying the approval_fy bounds.")
     naics_code = (
         pd.to_numeric(frame["NAICS"], errors="coerce")
         .fillna(0)
@@ -990,9 +1065,7 @@ def load_sba_loans(
     post_approval_columns = (
         ["disbursement_gross", "balance_gross", "chargeoff_amount"] if include_post_approval else []
     )
-    dropped_leakage = ["ChgOffDate", "DisbursementDate"]
-    if not include_post_approval:
-        dropped_leakage.extend(["DisbursementGross", "BalanceGross", "ChgOffPrinGr"])
+    dropped_leakage = list(SBA_LEAKAGE_COLUMNS)
 
     metadata = dict(DATASET_REGISTRY["sba"])
     metadata.update(
@@ -1002,6 +1075,8 @@ def load_sba_loans(
             "default_rate": float(y.mean()),
             "approval_fy_min": int(approval_fy.min()),
             "approval_fy_max": int(approval_fy.max()),
+            "vintage_min": approval_fy_min,
+            "vintage_max": approval_fy_max,
             "approval_date_min": str(approval_date.min().date()),
             "approval_date_max": str(approval_date.max().date()),
             "include_post_approval": include_post_approval,
@@ -1036,6 +1111,10 @@ def load_synthetic(
     as_bundle: bool = True,
 ) -> DatasetBundle | tuple[pd.DataFrame, pd.Series]:
     """Generate the synthetic portfolio and return a bundle (or ``X`` and ``y``).
+
+    The portfolio exposes only observable transactions as features. Labels come from a forward
+    window of ``outcome_months`` months; see ``generate_portfolio`` in
+    ``opencashflow/data/synthetic.py``.
 
     Feature extraction uses ``window_days=months * 31`` by default so the full generated history is
     used. Pass ``window_days`` to simulate a shorter observation window.

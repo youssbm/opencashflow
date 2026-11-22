@@ -4,7 +4,7 @@ Commands::
 
     opencashflow demo --companies 80 --scorer heuristic
     opencashflow features --transactions transactions.csv --output features.csv
-    opencashflow download --dataset polish german bangladesh_sme
+    opencashflow download polish german bangladesh_sme
     opencashflow benchmark --datasets german --models logistic,lightgbm
 """
 
@@ -80,15 +80,33 @@ def _download(args: argparse.Namespace) -> int:
     return download_main(argv)
 
 
+def _split_csv(value: str | None) -> tuple[str, ...]:
+    """Parse a comma-separated argument into a tuple of trimmed names."""
+    if not value:
+        return ()
+    return tuple(item.strip() for item in value.split(",") if item.strip())
+
+
 def _benchmark(args: argparse.Namespace) -> int:
     from opencashflow.benchmark import run_benchmark
 
     report = run_benchmark(
-        datasets=[item.strip() for item in args.datasets.split(",") if item.strip()],
-        models=[item.strip() for item in args.models.split(",") if item.strip()],
+        datasets=_split_csv(args.datasets),
+        models=_split_csv(args.models),
         cv=args.cv,
         seed=args.seed,
         output_dir=args.output_dir,
+        repeats=args.repeats,
+        split=args.split,
+        time_column=args.time_column,
+        oot_cutoff=args.oot_cutoff,
+        exclude_features=_split_csv(args.exclude_features),
+        variant=args.variant,
+        max_rows=args.max_rows,
+        sba_approval_fy_max=args.sba_approval_fy_max,
+        synthetic_companies=args.synthetic_companies,
+        synthetic_months=args.synthetic_months,
+        limix_pipelines=args.limix_pipelines,
     )
     print(report.to_markdown())
     return 0
@@ -146,6 +164,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     benchmark.add_argument("--cv", type=int, default=3)
     benchmark.add_argument("--seed", type=int, default=42)
+    benchmark.add_argument("--repeats", type=int, default=1)
+    benchmark.add_argument("--split", choices=["stratified", "oot"], default="stratified")
+    benchmark.add_argument("--time-column", type=str, default=None)
+    benchmark.add_argument("--oot-cutoff", type=float, default=None)
+    benchmark.add_argument("--exclude-features", type=str, default=None)
+    benchmark.add_argument("--variant", type=str, default="all")
+    benchmark.add_argument("--max-rows", type=int, default=None)
+    benchmark.add_argument("--sba-approval-fy-max", type=int, default=None)
+    benchmark.add_argument("--synthetic-companies", type=int, default=300)
+    benchmark.add_argument("--synthetic-months", type=int, default=20)
+    benchmark.add_argument("--limix-pipelines", type=int, default=1)
     benchmark.add_argument("--output-dir", type=Path, default=None)
     benchmark.set_defaults(func=_benchmark)
     return parser

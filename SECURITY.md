@@ -7,7 +7,7 @@ Security fixes are applied to the latest `0.1.x` release. This project is pre-1.
 ## Reporting a vulnerability
 
 Please do not open a public issue for a security problem. Report it privately to the maintainers
-through the repository's security advisory feature or the contact listed on the project page.
+through the repository's Security tab ("Report a vulnerability").
 
 Include:
 

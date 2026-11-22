@@ -37,8 +37,8 @@ committed.
 ### Feature layer
 
 `TransactionCategorizer` is rule-first: transparent patterns, direction-aware, multilingual, with an
-optional TF-IDF character n-gram fallback. The rule set is data, not code, so users can insert rules
-without rewriting the engine.
+optional TF-IDF character n-gram fallback. Rules are `CategoryRule` objects declared in Python
+(`DEFAULT_RULES`); pass the `rules` argument to replace them. There is no external rules file.
 
 `CashFlowFeatureExtractor` computes one row per entity over a configurable window. Every feature is
 declared in `features/specs.py`; the builder fails if code and catalogue drift. Features cover
@@ -49,27 +49,44 @@ Key choices:
 * **Safe arithmetic everywhere.** `safe_div`, HHI, entropy, slope, drawdown and seasonality helpers
   handle empty, zero and non-finite inputs.
 * **No silent infinities.** Outputs are cleaned and clipped.
-* **Point-in-time by default.** Pass `as_of` for production and out-of-time validation.
+* **Point-in-time requires `as_of`.** Pass `as_of` for production and out-of-time validation.
+  Without it, features use each entity's latest transaction date and a UserWarning is raised.
 * **Partial months are visible.** `months_observed` and `coverage_ratio` describe the window.
-* **No target-derived features.** The synthetic `stress` variable and the Bangladesh leakage column
-  are excluded.
+* **No target-derived features.** The Bangladesh leakage column is excluded. For the synthetic
+  generator, a latent `stress` variable drives both the ledger and the default probability, but it
+  is not exposed as a feature.
 
 ### Model layer
 
 All scorers expose `fit`, `predict_proba`, `predict` and `predict_pd`. The positive class is the
 second sorted class; encode default as `1`.
 
-* `LimiXScorer` performs in-context inference. `fit` stores the reference set; the checkpoint loads
-  lazily on first prediction.
 * `TreeBaseline` wraps LightGBM or XGBoost with categorical encoding and native missing-value
-  handling.
-* `LogisticBaseline` is a scikit-learn pipeline with median imputation, scaling, one-hot encoding
-  and L2 regularisation.
+  handling. `class_weight` defaults to `None`, so probabilities are not reweighted; pass `balanced`
+  to reweight. LightGBM receives ordinal-encoded categorical columns; XGBoost receives ordinal
+  codes, which is a documented limitation.
+* `LogisticBaseline` is a scikit-learn pipeline with imputation, scaling and one-hot encoding.
+  `numeric_transform` defaults to `quantile`, a normal quantile transform fitted inside each
+  training fold; `standard` gives the older scaler. `class_weight` also defaults to `None`.
+* `LimiXScorer` performs in-context inference. `fit` stores the reference set; the checkpoint loads
+  lazily on first prediction. `softmax_temperature` defaults to `None`, which resolves to 0.9 for
+  classification and 1.0 for regression. Imputation replaces only missing cells and leaves observed
+  cells unchanged; if LimiX returns NaN for a missing cell, the training median is used and a
+  UserWarning is raised.
 * `HeuristicScorer` is a fixed, explainable scorecard for demos and no-label situations.
+
+LimiX limitations: the wrapper encodes categories in alphabetical order, and LimiX infers categorical
+columns itself. With at least 100 training rows, a column with fewer than 4 unique training values
+is treated as categorical (upstream defaults); unseen categories map to -1. LimiX classification
+median-fills missing values, so the signal in missingness is lost. On Polish, the NaN count alone
+gives AUC 0.725.
 
 `models/explain.py` provides TreeSHAP for tree models, occlusion for any `predict_pd` model
 (including LimiX), and additive contributions for the heuristic scorecard. Reason codes are
-model-relative, not causal.
+model-relative, not causal. They list only risk-increasing features, largest first, and are
+illustrative adverse-action style statements, not regulated reason codes. Occlusion explanations use
+the training features as reference (the pipeline passes them as background); features are chosen per
+row by standardised deviation.
 
 ### Pipeline layer
 
@@ -80,9 +97,13 @@ fit:      transactions + labels -> categoriser -> features -> scorer
 predict:  transactions -> features -> PD -> rating -> policy decision -> reasons
 ```
 
+Pass `as_of` through `FeatureConfig` or to `predict` for point-in-time scoring. Without it, features
+use each entity's latest transaction date and a UserWarning is raised. The fitted pipeline keeps the
+training feature matrix as `training_features_` for use as the occlusion background, and joblib
+pickles include it; LimiX weights are excluded and reloaded lazily.
+
 `UnderwritingPolicy` is illustrative: approve below a PD cut-off, review in a band, decline above
-it, and refer cases with too little history. Persistence uses joblib; LimiX weights are excluded and
-reloaded lazily.
+it, and refer cases with too little history.
 
 ## Design decisions
 
@@ -101,9 +122,14 @@ retraining.
 
 ### Why LimiX plus trees?
 
-LimiX-2 is the strongest tabular model on TabArena at the time of writing and works well in the
-small-sample regime typical of SME credit. Trees are faster, cheaper and easier to explain, and
-logistic regression remains the regulatory reference. Reporting all three keeps claims honest.
+LimiX-2 is evaluated in this repository against tree and logistic baselines on four public datasets
+and one synthetic portfolio. Among the trained models it has the highest mean ROC-AUC on all four
+datasets, but its interval overlaps the next model's on German, on synthetic and on Bangladesh (by
+0.001), and it is clearly separated on Polish. On synthetic data it is level with the untrained
+heuristic. It is also much slower: about 286 s per fold on Polish on this CPU, versus under 0.1 s for
+the tree models. Trees are faster, cheaper and easier to explain, and logistic regression remains the
+regulatory reference. Reporting all three keeps claims honest. See
+[benchmark results](../benchmarks/results/benchmark_summary.md).
 
 ### Why 151 features?
 
@@ -121,12 +147,15 @@ engine.
 
 | Failure | Guardrail |
 |---|---|
-| Target leakage | Explicit leakage list in the Bangladesh loader; synthetic labels use post-ledger outcomes, not latent stress |
-| Look-ahead bias | `as_of` parameter; benchmark fits preprocessing inside folds |
+| Target leakage | Explicit leakage list in the Bangladesh loader; the synthetic label depends on a latent stress that also drives the ledger, and stress is not a feature |
+| Look-ahead bias | `as_of` parameter; a UserWarning is raised when it is absent; benchmark fits preprocessing inside folds |
 | Silent NaN/inf | Finite-value tests, cleaning and clipping |
-| Category drift | Rule catalogue is explicit; ML fallback can be retrained |
-| Model overconfidence | Brier and log-loss reported alongside AUC; calibration table helper |
+| Category drift | Rules are `CategoryRule` objects in Python; ML fallback can be retrained |
+| Model overconfidence | Brier and log-loss reported alongside AUC; calibration table helper; no calibration step is shipped |
 | Small samples | Stratified folds, reported fold variance, no quality claims from tiny fixtures |
+| Missing balance column | A UserWarning says balance features are cumulative-flow proxies, not account balances |
+| Multiple currencies | An entity with more than one currency raises `TransactionSchemaError`; no FX conversion is done |
+| Account-level identifiers | If a source has only account-level identifiers, the account becomes the entity and a UserWarning says so |
 | LimiX unavailable | `availability()` with actionable reasons; benchmark skips gracefully |
 | Non-commercial misuse | Licence notice in code, docs and README |
 | Raw data redistribution | Download scripts, `.gitignore`, attribution metadata |

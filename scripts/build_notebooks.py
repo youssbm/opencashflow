@@ -26,7 +26,11 @@ def _notebook(cells: list[tuple[str, str]]) -> nbf.NotebookNode:
         for kind, source in cells
     ]
     notebook["metadata"] = {
-        "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+        "kernelspec": {
+            "display_name": "OpenCashFlow Python",
+            "language": "python",
+            "name": "opencashflow",
+        },
         "language_info": {"name": "python"},
     }
     return notebook
@@ -57,6 +61,7 @@ The data is generated locally, so the notebook runs without downloads or credent
 warnings.filterwarnings("ignore")
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from opencashflow.data.synthetic import generate_portfolio
@@ -85,7 +90,7 @@ portfolio.transactions.head()""",
         ),
         (
             "markdown",
-            "## 2. Categorise one company's ledger\n\nThe categoriser is rule-first and direction-aware. Every prediction records the category, confidence, method and matched rule.",
+            "## 2. Categorise one company's ledger\n\nThe categoriser is rule-first and direction-aware. Every prediction records the category, confidence and method.",
         ),
         (
             "code",
@@ -139,17 +144,18 @@ plt.show()""",
         ),
         (
             "markdown",
-            "## 4. Build the full feature matrix\n\nOne row per borrower, 151 columns. The extractor uses a two-year window here so the full generated history is used.",
+            "## 4. Build the full feature matrix\n\nOne row per borrower, 151 columns. The 18-month window covers the full generated history, and a fixed `as_of` date keeps the features point in time.",
         ),
         (
             "code",
-            """extractor = CashFlowFeatureExtractor(config=FeatureConfig(window_days=18 * 31))
+            """config = FeatureConfig(window_days=18 * 31, as_of=portfolio.metadata["observation_end"])
+extractor = CashFlowFeatureExtractor(config=config)
 X = extractor.fit_transform(portfolio.transactions)
 y = portfolio.labels.set_index("entity_id")["default_flag"].reindex(X.index)
 
 print("Feature matrix:", X.shape)
 print("Default rate:", round(float(y.mean()), 3))
-print("All finite:", bool(X.notna().all().all()))
+print("All finite:", bool(np.isfinite(X.to_numpy()).all()))
 X[["revenue_total", "revenue_cv", "cash_buffer_months", "nsf_rate", "cashflow_health_score"]].describe().T""",
         ),
         (
@@ -164,7 +170,7 @@ plt.show()""",
         ),
         (
             "markdown",
-            "## 5. Do the features separate defaults?\n\nThe synthetic labels are generated from post-ledger outcomes such as low balances, negative cash-flow months, failed payments and falling inflows. The features should recover that signal without seeing the latent stress variable.",
+            "## 5. Do the features separate defaults?\n\nThe synthetic labels come from forward-window outcomes such as low balances, negative cash-flow months, failed payments and falling inflows. A latent stress variable also drives the label, but it is not a feature, so the features must recover the signal from the ledger alone.",
         ),
         (
             "code",
@@ -224,7 +230,7 @@ plt.show()""",
 
 * The categoriser turns localised narratives into consistent credit categories with an audit trail.
 * The feature matrix is wide but documented, and every value is finite.
-* Balance, negative-month, overdraft and health-score features separate outcomes in the synthetic benchmark.
+* Negative-month, overdraft and health-score features separate outcomes in this portfolio.
 * For production, pass a fixed `as_of` date and validate on out-of-time data.
 
 Next: [02_limix_scoring.ipynb](02_limix_scoring.ipynb) for PD modelling and explanations.
@@ -252,6 +258,8 @@ portfolio, compares ranking and calibration, and explains individual decisions.
             """import warnings
 warnings.filterwarnings("ignore")
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -273,7 +281,7 @@ pd.set_option("display.width", 140)""",
         ),
         (
             "markdown",
-            "## 1. Build a labelled portfolio\n\nWe use 120 companies and a two-year feature window. The train/test split is stratified so the default rate is similar in both sets.",
+            "## 1. Build a labelled portfolio\n\nWe use 120 companies and 18 months of observable history. The train/test split is stratified so the default rate is similar in both sets.",
         ),
         (
             "code",
@@ -283,7 +291,8 @@ pd.set_option("display.width", 140)""",
     default_rate=0.15,
     seed=7,
 )
-X, y = portfolio.to_features(FeatureConfig(window_days=18 * 31))
+config = FeatureConfig(window_days=18 * 31, as_of=portfolio.metadata["observation_end"])
+X, y = portfolio.to_features(config)
 X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.30, random_state=42, stratify=y
 )
@@ -297,7 +306,10 @@ print("Train:", X_train.shape, "Test:", X_test.shape, "Default rate:", round(flo
         (
             "code",
             """limix_info = LimiXScorer.availability()
-limix_info""",
+print("available:", limix_info["available"])
+print("reasons:", limix_info["reasons"])
+print("checkpoint:", Path(limix_info["model_path"]).name if limix_info["model_path"] else None)
+print("source:", Path(limix_info["limix_src"]).name if limix_info["limix_src"] else None)""",
         ),
         (
             "markdown",
@@ -393,7 +405,7 @@ explanation.top(8)[["feature", "value", "contribution", "direction", "descriptio
         ),
         (
             "markdown",
-            "## 6. What to remember\n\n* LimiX is competitive on small tabular samples but costs more latency than trees.\n* A high AUC can hide poor calibration; report Brier and log loss.\n* Explanations are decision support, not a causal claim or a complete adverse-action process.\n* One CPU pipeline is a fast demo, not a leaderboard reproduction.",
+            "## 6. What to remember\n\n* On this 120-company portfolio's 36-row holdout LightGBM ranks first with ROC-AUC 0.755, ahead of LimiX-2 at 0.716 and logistic regression at 0.523.\n* Brier score and log loss follow the same order: LightGBM 0.107 and 0.369, LimiX-2 0.143 and 0.441, logistic 0.227 and 1.053.\n* Calibration is shown for LightGBM, the top-ranked model. Several bins have observed rates away from their mean prediction.\n* Explanations use TreeSHAP on LightGBM. Reason codes are model-relative statements, not causal claims or regulated adverse-action codes. One CPU pipeline is a demo, not a leaderboard result.",
         ),
         (
             "code",
@@ -421,6 +433,10 @@ The protocol is deliberately conservative:
 * preprocessing fitted inside each training fold;
 * LimiX receives only the training fold as its in-context reference set;
 * AUC, KS, PR-AUC, Brier and log loss are reported.
+
+This notebook uses one repeat to keep the runtime short. The published tables use `repeats=2` and
+are in [benchmarks/results/benchmark_summary.md](../benchmarks/results/benchmark_summary.md). Do not
+read the numbers below as the published results.
 
 The Polish and SBA benchmarks are omitted here for runtime; run the CLI for all datasets, including
 the 5k SBA sample documented in `docs/datasets.md`.
@@ -451,7 +467,7 @@ pd.set_option("display.width", 160)""",
         ),
         (
             "markdown",
-            "## 2. Run the benchmark\n\nThis uses three datasets, three folds, and one LimiX pipeline. Expect a couple of minutes on CPU. If LimiX is unavailable, the harness skips it with a warning.",
+            "## 2. Run the benchmark\n\nThis uses three datasets, 300 synthetic companies, 20 months of history, three folds, one repeat and one LimiX pipeline on CPU. Expect several minutes. If LimiX is unavailable, the harness skips it with a warning.",
         ),
         (
             "code",
@@ -463,9 +479,10 @@ report = run_benchmark(
     datasets=["synthetic", "german", "bangladesh_sme"],
     models=["heuristic", "logistic", "lightgbm", "xgboost", "limix"],
     cv=3,
+    repeats=1,
     seed=42,
-    synthetic_companies=160,
-    synthetic_months=18,
+    synthetic_companies=300,
+    synthetic_months=20,
     limix_pipelines=1,
     output_dir=root / "benchmarks" / "results" / "notebook",
     verbose=True,
@@ -517,7 +534,11 @@ for name in ["german", "bangladesh_sme"]:
             "markdown",
             """## 6. Interpretation guardrails
 
-* These are small public datasets. Fold variance is real; read `roc_auc_std` in the results table.
+* In this one-repeat run LimiX has the highest mean ROC-AUC on all three datasets: 0.928 on
+  Bangladesh SME, 0.804 on German and 0.894 on synthetic.
+* Each model has three fold scores, so the intervals are wide. LimiX's synthetic interval runs from 0.699 to 1.089, and an AUC cannot exceed 1, so read `roc_auc_std` and the fold scores instead.
+* The heuristic scorecard appears only for synthetic. The harness skips it on German and Bangladesh
+  because they have no cash-flow features.
 * The synthetic portfolio is the only transaction-level benchmark and its labels are generated.
 * LimiX ran with one pipeline on CPU. A 32-member GPU run is not comparable.
 * Do not claim state of the art from this notebook. Use it to compare implementations, features and

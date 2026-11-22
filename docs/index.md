@@ -16,12 +16,12 @@ and compare cash-flow underwriting models without a data-sharing agreement.
 
 ## Highlights
 
-* **151 cash-flow features** across revenue, expenses, liquidity, debt, distress, behaviour, trends
-  and composite health.
-* **Multilingual transaction categoriser** for English, German, French, Polish, Italian, Dutch and
+* **151 cash-flow features in 9 groups:** coverage, revenue, expenses, liquidity, debt, distress,
+  behaviour, trends and composite health.
+* **Seven-language transaction categoriser** for English, German, French, Polish, Italian, Dutch and
   Spanish narratives, with an optional learned fallback.
 * **LimiX-2 wrapper** for classification, regression and imputation, including CPU/Windows support
-  and the non-commercial licence notice.
+  and the non-commercial weights notice.
 * **Tree and linear baselines** with SHAP explanations, calibration metrics and cost-sensitive
   thresholds.
 * **End-to-end pipeline**: transactions -> features -> PD -> rating -> decision -> reasons.
@@ -32,14 +32,16 @@ and compare cash-flow underwriting models without a data-sharing agreement.
 
 ```python
 from opencashflow.data.synthetic import generate_portfolio
+from opencashflow.features.cashflow_features import FeatureConfig
 from opencashflow.pipeline import CashFlowPipeline
 
 portfolio = generate_portfolio(n_companies=120, months=20, seed=42)
-pipeline = CashFlowPipeline(scorer="lightgbm").fit(
-    portfolio.transactions, portfolio.labels
-)
-scored = pipeline.predict(portfolio.transactions, top_k=3)
+config = FeatureConfig(as_of=portfolio.metadata["observation_end"])
+pipeline = CashFlowPipeline(config=config, scorer="lightgbm")
+pipeline.fit(portfolio.transactions, portfolio.labels)
+scored = pipeline.predict(portfolio.transactions, top_k=3, ead=25_000)
 print(scored[["pd", "rating", "decision", "reason_1"]].head())
+print(pipeline.portfolio_summary(scored))
 ```
 
 ## Documentation
@@ -53,6 +55,10 @@ print(scored[["pd", "rating", "decision", "reason_1"]].head())
 
 ## Licence
 
-Code: Apache-2.0. Public datasets keep their own licences (CC BY 4.0). **LimiX-2 weights are
-non-commercial** under the StableAI LimiX Non-Commercial License v1.0 and require a separate
-agreement for commercial use.
+Code: Apache-2.0. Public datasets keep their own licences: most are CC BY 4.0, the Bangladesh SME
+data is CC BY 4.0 for the data and MIT for the code, and the SBA data is CC BY-SA 4.0 (share-alike).
+**LimiX-2 weights are non-commercial** under the StableAI LimiX Non-Commercial License v1.0 and
+require a separate agreement for commercial use.
+
+Owner: Youssef Ben Mahmoud ([@youssbm](https://github.com/youssbm)). See the
+[project owner section](../README.md#project-owner).

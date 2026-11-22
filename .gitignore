@@ -43,7 +43,7 @@ data/processed/
 *.pt
 *.pth
 *.joblib
-models/
+/models/
 cache/
 benchmarks/results/notebook/
 

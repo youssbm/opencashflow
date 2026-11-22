@@ -43,9 +43,10 @@ def main() -> int:
     test_transactions = portfolio.transactions[portfolio.transactions["entity_id"].isin(test_ids)]
     train_labels = portfolio.labels[portfolio.labels["entity_id"].isin(train_ids)]
 
+    as_of = portfolio.metadata.get("observation_end") or portfolio.transactions["date"].max()
     pipeline = CashFlowPipeline(scorer="limix")
     pipeline.fit(train_transactions, train_labels)
-    scored = pipeline.predict(test_transactions, top_k=3, explain=False)
+    scored = pipeline.predict(test_transactions, as_of=as_of, top_k=3, explain=False)
 
     y = portfolio.labels.set_index("entity_id")["default_flag"].reindex(scored.index).astype(int)
     metrics = evaluate_binary(y, scored["pd"])
@@ -54,7 +55,7 @@ def main() -> int:
     print(f"LimiX holdout ROC-AUC: {metrics['roc_auc']:.3f}, KS: {metrics['ks']:.3f}")
     print(scored[["pd", "rating", "decision"]].head(8).to_string())
 
-    explanations = pipeline.explain(test_transactions, max_rows=1, max_features=20)
+    explanations = pipeline.explain(test_transactions, as_of=as_of, max_rows=1, max_features=20)
     if explanations:
         print("\nTop driver for the riskiest holdout application:")
         for reason in explanations[0].reason_codes(3):

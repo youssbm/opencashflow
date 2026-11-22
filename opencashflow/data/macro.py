@@ -6,13 +6,16 @@ substitute for borrower-level cash flow. This module provides a small, explicit 
 * accepts a tidy long table (country, period, indicator, value);
 * normalises periods to months;
 * forward-fills within country;
-* applies configurable lags so the value is known at the scoring date;
+* applies a publication lag and configurable lags so the value is known at the scoring date;
 * optionally computes year-on-year changes;
 * records whether a macro lookup was missing.
 
+Official series are released after their reference period. ``publication_lag`` (one month by
+default) shifts the lookup back so lag 0 is the latest value published by the scoring date.
+
 The data itself is not bundled. Download the series you need from Eurostat's REST API, the EBA data
 portal or a national statistics office, store the extraction date and vintage, and keep the raw
-file outside version control.
+file outside version control. In the example the 15 February score reads the January value.
 
 Example:
     >>> import pandas as pd
@@ -27,8 +30,8 @@ Example:
     >>> countries = pd.Series({"A": "DE", "B": "PL"})
     >>> as_of = pd.Series({"A": "2024-02-15", "B": "2024-02-15"})
     >>> out = joiner.transform(features, countries, as_of)
-    >>> out.loc["A", "macro_confidence_lag0"]
-    95.0
+    >>> float(out.loc["A", "macro_confidence_lag0"])
+    96.0
 """
 
 from __future__ import annotations
@@ -70,17 +73,21 @@ class MacroFeatureJoiner:
     """Join lagged macro indicators to an entity-level feature matrix.
 
     Args:
-        lags: Month lags to include. ``0`` is the latest observation at or before the scoring date,
-            ``3`` is the value three months earlier, and so on.
+        lags: Month lags to include, measured back from the publication-shifted scoring month.
+            ``0`` is the latest published observation, ``3`` is three months earlier, and so on.
+        publication_lag: Months between a series' reference period and its release. The lookup uses
+            ``as_of - publication_lag``, so lag 0 is the latest value published by the scoring
+            date. Must be non-negative.
         yoy_periods: Number of periods for a year-on-year change column. ``12`` for monthly data,
             ``4`` for quarterly data, or ``None`` to skip.
         prefix: Prefix for generated feature names.
-        fill_missing: Value used when no observation exists at or before the scoring date. The
+        fill_missing: Value used when no observation exists at or before the effective month. The
             accompanying ``macro_missing`` flag records the event.
         add_missing_flag: Add a 0/1 column indicating any missing macro lookup.
     """
 
     lags: tuple[int, ...] = (0, 3, 12)
+    publication_lag: int = 1
     yoy_periods: int | None = 12
     prefix: str = "macro"
     fill_missing: float = 0.0
@@ -91,6 +98,8 @@ class MacroFeatureJoiner:
             raise ValueError("At least one lag is required.")
         if any(lag < 0 for lag in self.lags):
             raise ValueError("Lags must be non-negative.")
+        if self.publication_lag < 0:
+            raise ValueError("publication_lag must be non-negative.")
         if self.yoy_periods is not None and self.yoy_periods < 1:
             raise ValueError("yoy_periods must be positive or None.")
 
@@ -147,8 +156,8 @@ class MacroFeatureJoiner:
         Args:
             features: Entity-level feature frame indexed by ``entity_id``.
             countries: Mapping or Series from entity id to ISO country code.
-            as_of: Scoring date, scalar or Series indexed by entity id. The macro lookup uses the
-                latest observation at or before this month.
+            as_of: Scoring date, scalar or Series indexed by entity id. The lookup uses the latest
+                value published by this date, shifting back by ``publication_lag`` months.
         """
         if not hasattr(self, "panel_"):
             raise RuntimeError("MacroFeatureJoiner is not fitted. Call fit() first.")
@@ -165,7 +174,7 @@ class MacroFeatureJoiner:
             if np.isscalar(as_of) or isinstance(as_of, (str, pd.Timestamp))
             else pd.Series(as_of).reindex(entity_ids)
         )
-        periods = pd.PeriodIndex(pd.to_datetime(as_of_series), freq="M")
+        periods = pd.PeriodIndex(pd.to_datetime(as_of_series), freq="M") - self.publication_lag
         lagged_panels: dict[int, pd.DataFrame] = {}
         for lag in self.lags:
             lagged_panels[lag] = self.panel_.groupby(level="country").shift(lag)

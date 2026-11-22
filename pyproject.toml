@@ -10,7 +10,11 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 authors = [
+  { name = "Youssef Ben Mahmoud" },
   { name = "OpenCashFlow contributors" },
+]
+maintainers = [
+  { name = "Youssef Ben Mahmoud" },
 ]
 keywords = [
   "credit-risk",
@@ -79,9 +83,9 @@ all = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/opencashflow/opencashflow"
-Documentation = "https://github.com/opencashflow/opencashflow/tree/main/docs"
-Issues = "https://github.com/opencashflow/opencashflow/issues"
+Homepage = "https://github.com/youssbm/opencashflow"
+Documentation = "https://github.com/youssbm/opencashflow/tree/main/docs"
+Issues = "https://github.com/youssbm/opencashflow/issues"
 
 [project.scripts]
 opencashflow = "opencashflow.cli:main"

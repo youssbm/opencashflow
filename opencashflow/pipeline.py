@@ -121,6 +121,7 @@ class CashFlowPipeline:
         extractor: The fitted :class:`CashFlowFeatureExtractor`.
         scorer_: The fitted scoring model.
         feature_names_in_: Feature columns used by the model.
+        training_features_: Feature matrix the scorer was fitted on, used as occlusion background.
         training_summary_: Small dictionary describing the fitted portfolio.
     """
 
@@ -144,6 +145,7 @@ class CashFlowPipeline:
         )
         self.scorer_: Any = None
         self.feature_names_in_: list[str] = []
+        self.training_features_: pd.DataFrame | None = None
         self.training_summary_: dict[str, Any] = {}
         self._fitted = False
 
@@ -199,6 +201,7 @@ class CashFlowPipeline:
             if isinstance(scorer, HeuristicScorer):
                 scorer.fit(features)
                 self.scorer_ = scorer
+                self.training_features_ = features.copy()
                 self._fitted = True
                 self.training_summary_ = {
                     "n_entities": len(features),
@@ -231,6 +234,7 @@ class CashFlowPipeline:
         X_train = joined.drop(columns="__label__")
         scorer.fit(X_train, y_train)
         self.scorer_ = scorer
+        self.training_features_ = X_train.copy()
         self._fitted = True
         self.training_summary_ = {
             "n_entities": len(features),
@@ -276,9 +280,13 @@ class CashFlowPipeline:
         will overstate performance, especially for in-context models such as LimiX. Use a
         borrower-level holdout or cross-validation for measurement.
 
+        Pass ``as_of`` for out-of-time validation, and use it for scoring so features are built only
+        from history up to that date. For example ``pipeline.predict(tx, as_of="2024-06-30")``.
+
         Args:
             transactions: Raw or canonical transactions.
-            as_of: Optional point-in-time cut-off.
+            as_of: Point-in-time cut-off. Required for out-of-time validation and recommended for
+                scoring; omitting it uses each borrower's latest transaction date.
             explain: Add reason codes and explanation metadata.
             top_k: Number of reason codes per borrower.
             explain_max_rows: Maximum number of borrowers to explain, starting with the highest PD.
@@ -301,6 +309,7 @@ class CashFlowPipeline:
             }:
                 features = self.extractor.fit_transform(transactions)
                 self.scorer_ = self._build_scorer().fit(features)
+                self.training_features_ = features.copy()
                 self._fitted = True
                 self.feature_names_in_ = list(features.columns)
             else:
@@ -369,7 +378,9 @@ class CashFlowPipeline:
         if max_rows is not None:
             order = order[:max_rows]
         selected = features.iloc[order]
-        return explain_model(self.scorer_, selected, max_features=max_features)
+        return explain_model(
+            self.scorer_, selected, background=self.training_features_, max_features=max_features
+        )
 
     def _predict_pd(self, features: pd.DataFrame) -> np.ndarray:
         if hasattr(self.scorer_, "predict_pd"):
@@ -392,7 +403,9 @@ class CashFlowPipeline:
             selected = features.iloc[order]
         else:
             selected = features
-        return explain_model(self.scorer_, selected, max_features=30)
+        return explain_model(
+            self.scorer_, selected, background=self.training_features_, max_features=30
+        )
 
     # ------------------------------------------------------------------ reporting / persistence
     def portfolio_summary(self, scored: pd.DataFrame) -> dict[str, Any]:
@@ -426,8 +439,9 @@ class CashFlowPipeline:
     def save(self, path: str | Path) -> Path:
         """Persist the fitted pipeline with joblib.
 
-        LimiX predictors are not serialised; the checkpoint path and configuration are stored and
-        the predictor is reloaded lazily on the next prediction.
+        The pickle includes the training feature matrix used as the occlusion background. LimiX
+        predictors are not serialised; the checkpoint path and configuration are stored and the
+        predictor is reloaded lazily on the next prediction.
         """
         import joblib
 

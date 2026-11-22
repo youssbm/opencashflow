@@ -75,7 +75,7 @@ def main() -> None:
     )
 
     extractor = CashFlowFeatureExtractor(config=FeatureConfig(window_days=365))
-    features = extractor.fit_transform(transactions)
+    features = extractor.fit_transform(transactions, as_of="2024-12-31")
     print("\nFeature matrix:", features.shape)
     print(
         features[

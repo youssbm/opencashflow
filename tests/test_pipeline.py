@@ -120,3 +120,23 @@ def test_pipeline_rejects_mismatched_labels(company_transactions):
     labels = pd.Series({"unknown_entity": 1})
     with pytest.raises(ValueError, match="No entities matched"):
         CashFlowPipeline(scorer="heuristic").fit(company_transactions, labels)
+
+
+def test_logistic_explanation_uses_training_background(portfolio):
+    pipeline = CashFlowPipeline(scorer="logistic").fit(portfolio.transactions, portfolio.labels)
+    assert pipeline.training_features_ is not None
+    assert list(pipeline.training_features_.columns) == pipeline.feature_names_in_
+    explanations = pipeline.explain(portfolio.transactions, max_rows=1)
+    assert len(explanations) == 1
+    assert explanations[0].method == "occlusion"
+    assert bool(explanations[0].contributions.abs().gt(0).any())
+
+
+def test_heuristic_without_labels_saves_and_loads(portfolio, tmp_path):
+    pipeline = CashFlowPipeline(scorer="heuristic").fit(portfolio.transactions)
+    path = pipeline.save(tmp_path / "heuristic.joblib")
+    loaded = CashFlowPipeline.load(path)
+    assert loaded.training_features_ is not None
+    scored = loaded.predict(portfolio.transactions, explain=False)
+    assert len(scored) == 30
+    assert {"pd", "rating", "decision"} <= set(scored.columns)

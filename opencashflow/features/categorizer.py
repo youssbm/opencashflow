@@ -1,13 +1,15 @@
 """Transaction categorisation for open-banking and bank-statement data.
 
 The default engine is a transparent, priority-ordered rule set covering common European bank
-narratives (SEPA, German, French, Italian, Polish and English). A lightweight character n-gram
-classifier can be trained from labelled data and used as a fallback when no rule matches.
+narratives in seven languages (English, German, French, Polish, Italian, Dutch and Spanish). A
+lightweight character n-gram classifier can be trained from labelled data and used as a fallback
+when no rule matches.
 
 Design goals:
 
 * **Auditable** - every prediction carries the rule or model that produced it.
-* **Multilingual** - text is accent-folded and matched against patterns in five languages.
+* **Multilingual** - text is accent-folded and matched against patterns in seven languages
+  (English, German, French, Polish, Italian, Dutch and Spanish).
 * **Direction-aware** - the same token ("TRANSFER", "INVOICE") means different things on credits
   and debits, so rules declare the direction they apply to.
 * **Extensible** - pass your own :class:`CategoryRule` list; the defaults are only a starting point.
@@ -37,6 +39,7 @@ CATEGORY_DESCRIPTIONS: dict[str, str] = {
     "other_inflow": "Inflows that could not be assigned to a specific category",
     "transfer_in": "Incoming transfers, often internal or owner funding",
     "loan_proceeds": "Drawdown of a loan or credit facility",
+    "equity_injection": "Owner or shareholder equity received",
     "refund": "Refunds and returned funds received",
     "interest_income": "Interest credited by the bank",
     "payroll": "Salaries, wages and social contributions paid to employees",
@@ -59,7 +62,15 @@ CATEGORY_DESCRIPTIONS: dict[str, str] = {
 }
 
 INFLOW_CATEGORIES = frozenset(
-    {"revenue", "other_inflow", "transfer_in", "loan_proceeds", "refund", "interest_income"}
+    {
+        "revenue",
+        "other_inflow",
+        "transfer_in",
+        "loan_proceeds",
+        "equity_injection",
+        "refund",
+        "interest_income",
+    }
 )
 OUTFLOW_CATEGORIES = frozenset(
     {
@@ -100,6 +111,17 @@ EXPENSE_CATEGORIES = frozenset(
     }
 )
 DEBT_CATEGORIES = frozenset({"loan_repayment", "interest_expense"})
+
+#: Return and rejection vocabulary across the seven supported languages. Match this against
+#: :func:`normalize_text` output, which is accent-folded and upper case.
+RETURNED_PAYMENT_PATTERN = (
+    r"\b(?:RETURN|REJECT|REJET|REJETE|DISHONOUR|DISHONOR|UNPAID|FAILED|BOUNCED|CHARGEBACK|"
+    r"RUECKLASTSCHRIFT|RUCKLASTSCHRIFT|NICHT AUSGEFUEHRT|NICHT AUSGEFUHRT|"
+    r"NICHT EINGELOEST|EINGELOEST|EINGELOST|"
+    r"UNGENUEGEND|UNGENUGEND|ZURUECKGEBUCHT|ZURUCKGEBUCHT|"
+    r"IMPAYE|RETOUR|RIFIUT|RESTITUIT|ODRZUC|ZWROT|"
+    r"TERUGGEBOEKT|ONVOLDOENDE|GEWEIGERD|DEVUELT|RECHAZ|NO EJECUTAD)"
+)
 
 #: Words that identify internal transfers. These are checked before generic revenue/transfer rules.
 _INTERNAL_TRANSFER = (
@@ -148,8 +170,12 @@ class CategoryRule:
         object.__setattr__(self, "_compiled", compiled)
 
     def matches(self, text: str, direction: str) -> str | None:
-        """Return the matching pattern source, or ``None``."""
-        if self.direction != "any" and self.direction != direction:
+        """Return the matching pattern source, or ``None``.
+
+        ``direction="any"`` means no direction filtering, so a direction-specific rule is still
+        consulted in that case.
+        """
+        if self.direction != "any" and direction != "any" and self.direction != direction:
             return None
         for pattern, regex in zip(self.patterns, self._compiled):
             if regex.search(text):
@@ -194,8 +220,9 @@ DEFAULT_RULES: tuple[CategoryRule, ...] = (
         (
             r"\b(NSF|INSUFFICIENT FUNDS|RETURNED (ITEM|PAYMENT|DIRECT DEBIT|CHEQUE)|"
             r"RETURN OF FUNDS|REJECTED|DISHONOU?R|UNPAID|RUECKLASTSCHRIFT|RUCKLASTSCHRIFT|"
-            r"LASTSCHRIFT NICHT|IMPAYE|REJETE|RIFIUTATO|ODRZUCONY|ODRZUCONA|CHARGEBACK|"
-            r"PAYMENT FAILED|DIRECT DEBIT FAILED|TERUGGEBOEKT|DEVUELTO|RESTITUZIONE)\b"
+            r"LASTSCHRIFT NICHT|ZURUECKGEBUCHT|IMPAYE|REJETE|RIFIUTATO|ODRZUCONY|ODRZUCONA|"
+            r"CHARGEBACK|PAYMENT FAILED|DIRECT DEBIT FAILED|TERUGGEBOEKT|DEVUELTO|"
+            r"RESTITUZIONE|RECHAZ\w*|GEWEIGERD)\b"
         ),
         "outflow",
         6,
@@ -215,25 +242,24 @@ DEFAULT_RULES: tuple[CategoryRule, ...] = (
         (
             r"\b(TAX|TAXES|CORPORATION TAX|INCOME TAX|WITHHOLDING TAX|FINANZAMT|STEUER|"
             r"URZAD SKARBOWY|PODATEK|IMPOT|IMPOTS|IMPUESTO|BELASTING|BELASTINGDIENST|F24|"
-            r"AGENZIA DELLE ENTRATE|HMRC|REVENUE COMMISSIONERS|IRS|SOCIAL SECURITY|"
-            r"URSSAF|INPS|ZUS|KRUS)\b"
+            r"AGENZIA DELLE ENTRATE|HMRC|REVENUE COMMISSIONERS|IRS)\b"
         ),
         "outflow",
         9,
         0.92,
-        "Direct tax or social contribution",
+        "Direct tax payment",
     ),
     _rule(
         "payroll",
         (
             r"\b(PAYROLL|SALARY|SALARIES|SALARIS|SALARI|WAGES|LOHN|LOHNE|GEHALT|GEHALTER|"
             r"SALAIRE|SALARIOS|SALARIO|WYNAGRODZENIE|WYNAGRODZENIA|PAYE|PAYSLIP|"
-            r"BONUS PAYMENT|EMPLOYEE PAYMENT|STAFF COST)\b"
+            r"BONUS PAYMENT|EMPLOYEE PAYMENT|STAFF COST|SOCIAL SECURITY|URSSAF|INPS|ZUS|KRUS)\b"
         ),
         "outflow",
         10,
         0.95,
-        "Employee salary or payroll payment",
+        "Employee salary, payroll or social contribution payment",
     ),
     _rule(
         "interest_expense",
@@ -323,12 +349,20 @@ DEFAULT_RULES: tuple[CategoryRule, ...] = (
         (
             r"\b(LOAN DISBURSEMENT|LOAN PROCEEDS|DRAWDOWN|CREDIT FACILITY|KREDITAUSZAHLUNG|"
             r"PRET ACCORDE|MUTUO EROGATO|PRESTAMO CONCEDIDO|FINANCING RECEIVED|"
-            r"CAPITAL INJECTION|SHAREHOLDER LOAN|FACILITY DRAWING)\b"
+            r"SHAREHOLDER LOAN|FACILITY DRAWING)\b"
         ),
         "inflow",
         18,
         0.95,
         "Loan drawdown or financing received",
+    ),
+    _rule(
+        "equity_injection",
+        (r"\b(CAPITAL INJECTION)\b",),
+        "inflow",
+        18,
+        0.95,
+        "Owner or shareholder equity received",
     ),
     _rule(
         "interest_income",

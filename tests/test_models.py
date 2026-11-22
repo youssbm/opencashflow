@@ -87,6 +87,57 @@ def test_heuristic_scorecard(feature_frame, feature_labels):
     assert metrics["roc_auc"] > 0.5
 
 
+def test_default_baselines_preserve_base_rate():
+    rng = np.random.default_rng(7)
+    X = pd.DataFrame(rng.normal(size=(1500, 5)), columns=[f"x{i}" for i in range(5)])
+    y = (rng.random(1500) < 0.20).astype(int)
+    logistic = LogisticBaseline().fit(X, y)
+    assert abs(float(logistic.predict_pd(X).mean()) - 0.20) < 0.05
+    assert logistic.class_weight is None
+    if available_backends()["lightgbm"]:
+        tree = TreeBaseline("lightgbm").fit(X, y)
+        assert abs(float(tree.predict_pd(X).mean()) - 0.20) < 0.05
+        assert tree.class_weight is None
+
+
+def test_logistic_numeric_transform_options():
+    rng = np.random.default_rng(11)
+    X = pd.DataFrame(rng.normal(size=(200, 4)), columns=[f"x{i}" for i in range(4)])
+    y = (X["x0"] + rng.normal(scale=0.5, size=200) > 0).astype(int)
+    for option in ("quantile", "standard"):
+        model = LogisticBaseline(numeric_transform=option).fit(X, y)
+        proba = model.predict_proba(X)
+        assert np.allclose(proba.sum(axis=1), 1.0)
+        assert np.allclose(proba, model.predict_proba(X))
+    with pytest.raises(ValueError, match="numeric_transform"):
+        LogisticBaseline(numeric_transform="rank")
+
+
+def test_logistic_standard_matches_manual_pipeline():
+    from sklearn.impute import SimpleImputer
+    from sklearn.linear_model import LogisticRegression
+    from sklearn.pipeline import Pipeline
+    from sklearn.preprocessing import StandardScaler
+
+    rng = np.random.default_rng(13)
+    X = pd.DataFrame(rng.normal(size=(300, 4)), columns=[f"x{i}" for i in range(4)])
+    y = (X["x0"] > 0).astype(int)
+    model = LogisticBaseline(numeric_transform="standard").fit(X, y)
+    manual = Pipeline(
+        [
+            ("impute", SimpleImputer(strategy="median")),
+            ("scale", StandardScaler()),
+            (
+                "model",
+                LogisticRegression(C=1.0, class_weight=None, max_iter=3_000, random_state=42),
+            ),
+        ]
+    ).fit(X, y)
+    actual = model.model_.named_steps["model"].coef_.reshape(-1)
+    expected = manual.named_steps["model"].coef_.reshape(-1)
+    assert np.allclose(actual, expected, atol=1e-6)
+
+
 def test_logistic_baseline(feature_frame, feature_labels):
     X_train, X_test, y_train, y_test = train_test_split(
         feature_frame, feature_labels, test_size=0.3, random_state=1, stratify=feature_labels
@@ -160,3 +211,46 @@ def test_factory_and_unknown_backend():
 def test_binary_class_validation():
     with pytest.raises(ValueError, match="two classes"):
         LogisticBaseline().fit(pd.DataFrame({"x": [1, 2, 3]}), [0, 0, 0])
+
+
+@pytest.mark.parametrize("numeric_transform", ["quantile", "standard"])
+def test_logistic_all_nan_numeric_with_categorical(numeric_transform):
+    rng = np.random.default_rng(42)
+    n = 20
+    X = pd.DataFrame(
+        {
+            "empty": np.full(n, np.nan),
+            "cat": ["a", "b"] * (n // 2),
+        }
+    )
+    y = np.array([0, 1] * (n // 2))
+    rng.shuffle(y)
+    model = LogisticBaseline(numeric_transform=numeric_transform).fit(X, y)
+    proba = model.predict_proba(X)
+    assert proba.shape == (n, 2)
+    assert np.isfinite(proba).all()
+    assert np.allclose(proba.sum(axis=1), 1.0)
+    new_rows = X.iloc[:4].copy()
+    new_rows["empty"] = np.nan
+    new_proba = model.predict_proba(new_rows)
+    assert new_proba.shape == (4, 2)
+    assert np.isfinite(new_proba).all()
+    assert np.allclose(new_proba.sum(axis=1), 1.0)
+
+
+@pytest.mark.parametrize("numeric_transform", ["quantile", "standard"])
+def test_logistic_only_all_nan_numeric(numeric_transform):
+    rng = np.random.default_rng(42)
+    n = 20
+    X = pd.DataFrame({"empty": np.full(n, np.nan)})
+    y = np.array([0, 1] * (n // 2))
+    rng.shuffle(y)
+    model = LogisticBaseline(numeric_transform=numeric_transform).fit(X, y)
+    proba = model.predict_proba(X)
+    assert proba.shape == (n, 2)
+    assert np.isfinite(proba).all()
+    assert np.allclose(proba.sum(axis=1), 1.0)
+    new_proba = model.predict_proba(pd.DataFrame({"empty": [np.nan, np.nan]}))
+    assert new_proba.shape == (2, 2)
+    assert np.isfinite(new_proba).all()
+    assert np.allclose(new_proba.sum(axis=1), 1.0)

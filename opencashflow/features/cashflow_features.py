@@ -20,6 +20,7 @@ Example:
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -31,6 +32,7 @@ from opencashflow.features.categorizer import (
     CATEGORY_DESCRIPTIONS,
     EXPENSE_CATEGORIES,
     OUTFLOW_CATEGORIES,
+    RETURNED_PAYMENT_PATTERN,
     TransactionCategorizer,
     normalize_text,
 )
@@ -281,17 +283,62 @@ def _monthly_category_frame(tx: pd.DataFrame, months: pd.PeriodIndex) -> pd.Data
     return monthly
 
 
+def _account_ids(frame: pd.DataFrame) -> pd.Series:
+    """Non-empty account identifiers aligned to ``frame``, empty string when unavailable."""
+    if "account_id" not in frame.columns:
+        return pd.Series("", index=frame.index, dtype="object")
+    values = frame["account_id"]
+    ids = values.map(lambda v: str(v).strip() if pd.notna(v) else "")
+    return ids.where(ids != "", "")
+
+
+def _n_balance_accounts(tx: pd.DataFrame) -> int:
+    """Number of distinct accounts that have at least one non-null balance."""
+    balances = tx.dropna(subset=["balance"])
+    if balances.empty:
+        return 0
+    ids = _account_ids(balances)
+    return int(ids[ids != ""].nunique())
+
+
 def _daily_balance_series(tx: pd.DataFrame, start: pd.Timestamp, as_of: pd.Timestamp) -> pd.Series:
-    """Daily balance, carried forward. Uses observed balances when available."""
+    """Daily end-of-day balance, carried forward, summed over accounts when needed.
+
+    With one account or no account identifiers the original carry-forward is used. With two or
+    more accounts holding balances, each account is carried forward on its own and added per day.
+    Accounts with no balance rows are left out of the sum and always trigger a warning, computed
+    once from all account ids of the entity.
+    """
     index = pd.date_range(start=start, end=as_of, freq="D")
     balances = tx.dropna(subset=["balance"])
-    if not balances.empty:
-        observed = balances.set_index("date")["balance"].groupby(level=0).last().sort_index()
-        series = observed.reindex(index).ffill().bfill()
-        return series.fillna(0.0)
-    daily_net = tx.set_index("date")["amount"].groupby(level=0).sum().sort_index()
-    series = daily_net.reindex(index).fillna(0.0).cumsum()
-    return series
+    if balances.empty:
+        daily_net = tx.set_index("date")["amount"].groupby(level=0).sum().sort_index()
+        return daily_net.reindex(index).fillna(0.0).cumsum()
+
+    all_ids = _account_ids(tx)
+    balance_ids = _account_ids(balances)
+    missing = set(all_ids[all_ids != ""]) - set(balance_ids[balance_ids != ""])
+    if missing:
+        warnings.warn(
+            f"{len(missing)} account(s) have no balance rows and are excluded from the "
+            "summed daily balance.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+    if _n_balance_accounts(tx) >= 2:
+        work = balances.assign(_account=balance_ids)
+        work = work.loc[work["_account"] != ""]
+        parts = []
+        for _, group in work.groupby("_account", sort=True):
+            observed = group.set_index("date")["balance"].groupby(level=0).last().sort_index()
+            parts.append(observed.reindex(index).ffill().bfill())
+        total = sum(parts, pd.Series(0.0, index=index))
+        return total.fillna(0.0)
+
+    observed = balances.set_index("date")["balance"].groupby(level=0).last().sort_index()
+    series = observed.reindex(index).ffill().bfill()
+    return series.fillna(0.0)
 
 
 class CashFlowFeatureExtractor:
@@ -351,9 +398,27 @@ class CashFlowFeatureExtractor:
         """
         prepared = self._prepare(transactions)
         override = _as_timestamp(as_of)
+        if self.config.as_of is None and as_of is None:
+            warnings.warn(
+                "No as_of date: features use each entity's latest transaction date, which is "
+                "not point-in-time. Pass as_of for scoring or out-of-time validation.",
+                UserWarning,
+                stacklevel=2,
+            )
         rows: dict[str, pd.Series] = {}
+        missing_balance: list[str] = []
         for entity_id, group in prepared.groupby("entity_id", observed=True, sort=True):
-            rows[str(entity_id)] = self._compute_entity(group, override)
+            row, has_balance = self._compute_entity(group, override)
+            rows[str(entity_id)] = row
+            if not has_balance:
+                missing_balance.append(str(entity_id))
+        if missing_balance:
+            warnings.warn(
+                f"{len(missing_balance)} entity(ies) have no balance data; balance-derived "
+                "features are cumulative-flow proxies, not account balances.",
+                UserWarning,
+                stacklevel=2,
+            )
         if not rows:
             return pd.DataFrame(columns=FEATURE_NAMES, dtype=float)
         out = pd.DataFrame.from_dict(rows, orient="index")
@@ -408,7 +473,9 @@ class CashFlowFeatureExtractor:
         return prepared.reset_index(drop=True)
 
     # ------------------------------------------------------------------ per entity
-    def _compute_entity(self, tx: pd.DataFrame, override: pd.Timestamp | None) -> pd.Series:
+    def _compute_entity(
+        self, tx: pd.DataFrame, override: pd.Timestamp | None
+    ) -> tuple[pd.Series, bool]:
         config = self.config
         tx = tx.sort_values(["date", "transaction_id"], kind="stable").copy()
         configured_as_of = (
@@ -418,14 +485,14 @@ class CashFlowFeatureExtractor:
         as_of = pd.Timestamp(as_of).normalize()
         tx = tx.loc[tx["date"] <= as_of]
         if tx.empty:
-            return pd.Series(0.0, index=FEATURE_NAMES, dtype=float)
+            return pd.Series(0.0, index=FEATURE_NAMES, dtype=float), True
 
         first_date = tx["date"].min()
         window_start = as_of - pd.Timedelta(days=config.window_days - 1)
         start = max(window_start, first_date)
         tx = tx.loc[tx["date"] >= start].copy()
         if tx.empty:
-            return pd.Series(0.0, index=FEATURE_NAMES, dtype=float)
+            return pd.Series(0.0, index=FEATURE_NAMES, dtype=float), True
 
         days_observed = max(int((as_of - start).days) + 1, 1)
         months = pd.period_range(start=start.to_period("M"), end=as_of.to_period("M"), freq="M")
@@ -433,6 +500,9 @@ class CashFlowFeatureExtractor:
 
         monthly = _monthly_category_frame(tx, months)
         daily_balance = _daily_balance_series(tx, start, as_of)
+        if _n_balance_accounts(tx) >= 2:
+            month_end = daily_balance.groupby(daily_balance.index.to_period("M")).last()
+            monthly["end_balance"] = month_end.reindex(months).ffill().bfill().fillna(0.0)
 
         revenue_keys = set(config.revenue_keys)
         expense_keys = set(config.expense_keys)
@@ -461,7 +531,7 @@ class CashFlowFeatureExtractor:
             expense_total=expense_total,
             months=months,
         )
-        return self._features(view)
+        return self._features(view), has_balance
 
     # ------------------------------------------------------------------ feature functions
     def _features(self, view: _EntityView) -> pd.Series:
@@ -630,8 +700,8 @@ class CashFlowFeatureExtractor:
         b.add("balance_last_90d_mean", last90.mean() if len(last90) else float(balance.iloc[-1]))
         b.add("balance_min_last_90d", last90.min() if len(last90) else float(balance.min()))
         b.add("balance_drawdown_max", max_drawdown(balance))
-        tx_balance = balance.reindex(pd.DatetimeIndex(tx["date"])).to_numpy(dtype=float)
-        negative_days = int(np.sum(tx_balance < 0))
+        active_balance = balance.reindex(pd.DatetimeIndex(pd.unique(tx["date"]))).dropna()
+        negative_days = int((active_balance < 0).sum())
         b.add("negative_balance_days", negative_days)
         b.add("negative_balance_ratio", safe_div(negative_days, active_days))
         overdraft_days = int((balance < 0).sum())
@@ -658,13 +728,14 @@ class CashFlowFeatureExtractor:
         interest_total = float(interest.sum())
         proceeds_total = float(loan_proceeds.sum())
         cash_available = revenue_total - (expense_total - interest_total)
+        debt_service = repayment_total + interest_total
         b.add("loan_repayment_total", repayment_total)
         b.add("loan_repayment_monthly_mean", loan_repayment.mean())
         b.add("debt_service_ratio", safe_div(repayment_total, revenue_total))
         dscr = (
             10.0
-            if repayment_total <= 0
-            else min(max(safe_div(cash_available, repayment_total), 0.0), 10.0)
+            if debt_service <= 0
+            else min(max(safe_div(cash_available, debt_service), 0.0), 10.0)
         )
         b.add("dscr", dscr)
         b.add("interest_total", interest_total)
@@ -690,7 +761,7 @@ class CashFlowFeatureExtractor:
             (tx["category"] == "nsf")
             & tx["description"]
             .map(normalize_text)
-            .str.contains(r"RETURN|REJECT|DISHONOU?R|FAILED|UNPAID", regex=True)
+            .str.contains(RETURNED_PAYMENT_PATTERN, regex=True)
         ]
         b.add("returned_payment_count", len(returned))
         b.add("returned_payment_rate", safe_div(len(returned), len(tx)))

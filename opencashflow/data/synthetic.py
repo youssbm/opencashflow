@@ -5,11 +5,16 @@ generates realistic multi-country ledgers with an explicit latent distress proce
 cash-flow features have genuine predictive signal and the whole toolkit can be demonstrated and
 tested without data-sharing agreements.
 
+A portfolio has two time windows. The first is the observable history that features may see. The
+second is a forward outcome window used only to draw default labels. A latent stress variable drives
+both the ledger and the probability of default. Stress is never exposed as a feature, so experiments
+stay point in time and free of look-ahead leakage.
+
 The generator is not a simulator of any specific bank. It is a controlled benchmark: revenue,
 payroll, rent, supplier, tax, debt-service, fee, cash and distress events are produced with
-country-specific narratives, then a default label is sampled from a risk score that depends on the
-same latent stress that drives the ledger. This makes leakage-free experiments possible while
-keeping the data-generating process documented.
+country-specific narratives, then a default label is sampled from a risk score that depends on
+outcomes in the forward window and on the same latent stress that drives the ledger. This makes
+leakage-free experiments possible while keeping the data-generating process documented.
 
 Example:
     >>> from opencashflow.data.synthetic import generate_portfolio
@@ -272,18 +277,21 @@ class CompanyProfile:
 
 @dataclass
 class SyntheticPortfolio:
-    """A generated portfolio: transactions, borrower labels and the latent profiles."""
+    """A generated portfolio with observable history, forward outcomes, labels and profiles."""
 
     transactions: pd.DataFrame
     labels: pd.DataFrame
     profiles: pd.DataFrame
     metadata: dict[str, Any] = field(default_factory=dict)
+    outcome_transactions: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     def to_features(
         self,
         config: FeatureConfig | None = None,
     ) -> tuple[pd.DataFrame, pd.Series]:
         """Compute cash-flow features and align the default labels.
+
+        Features see only observable history, capped at the observation end stored in metadata.
 
         Returns:
             ``(X, y)`` where ``X`` is indexed by ``entity_id`` and ``y`` is the binary
@@ -293,7 +301,7 @@ class SyntheticPortfolio:
 
         cfg = config or FeatureConfig(window_days=730)
         extractor = CashFlowFeatureExtractor(config=cfg)
-        X = extractor.fit_transform(self.transactions)
+        X = extractor.fit_transform(self.transactions, as_of=self.metadata["observation_end"])
         y = (
             self.labels.set_index("entity_id")["default_flag"]
             .reindex(X.index)
@@ -348,14 +356,18 @@ def generate_company_transactions(
     months: int = 24,
     seed: int = 42,
     start_date: str | pd.Timestamp | None = None,
+    observable_months: int | None = None,
 ) -> pd.DataFrame:
     """Generate one company's transaction ledger.
 
     Args:
         profile: Company parameters. Defaults to :class:`CompanyProfile`.
-        months: Number of calendar months to generate.
+        months: Number of calendar months to generate in total.
         seed: Random seed. The same seed and profile always produce the same ledger.
         start_date: First month. Defaults to ``profile.start_date``.
+        observable_months: Number of leading months that features will see. When given, it places
+            the stressed-firm debt disbursement inside that observable window. When None, ``months``
+            is used and the event keeps its historical placement.
 
     Returns:
         Canonical-style transaction rows with ``entity_id``, ``date``, signed ``amount``,
@@ -371,6 +383,7 @@ def generate_company_transactions(
     provider = str(rng.choice(("Vattenfall", "E.ON", "Engie", "Iberdrola", "Enel", "Eneco")))
     start = pd.Timestamp(start_date or profile.start_date)
     start = (start.to_period("M").start_time).normalize()
+    event_months = observable_months if observable_months is not None else months
     rows: list[dict[str, Any]] = []
 
     for t in range(months):
@@ -613,7 +626,7 @@ def generate_company_transactions(
             )
 
         # A distressed company may draw new debt or receive owner support.
-        if stress > 0.6 and t == max(1, months // 2):
+        if stress > 0.6 and t == max(1, event_months // 2):
             rows.append(
                 _transaction(
                     month_start + pd.Timedelta(days=12),
@@ -674,16 +687,24 @@ def _calibrate_intercept(scores: np.ndarray, target_rate: float) -> float:
     return 0.5 * (low + high)
 
 
-_NSF_PATTERN = r"NSF|INSUFFICIENT|RETURNED|IMPAG|ODRZUC|RIFIUT|TERUG|DEVUELTO|REJECT"
-
-
 def _ledger_outcomes(transactions: pd.DataFrame, profiles: list[CompanyProfile]) -> pd.DataFrame:
-    """Summarise post-ledger distress outcomes used to generate default labels.
+    """Summarise forward-window distress outcomes used to generate default labels.
 
     The label process is deliberately grounded in observable outcomes: low or negative balances,
-    consecutive negative cash-flow months, failed payments and falling inflows. This keeps the
-    synthetic benchmark learnable from the transaction features without leaking the latent stress
-    variable directly into the model.
+    consecutive negative cash-flow months, failed payments and falling inflows. Failed payments are
+    counted only when a description exactly equals one of the country NSF templates, so substrings
+    such as the NSF inside TRANSFER do not inflate the count. This keeps the synthetic benchmark
+    learnable from the transaction features without leaking the latent stress variable directly
+    into the model.
+
+    Args:
+        transactions: Outcome-window rows with ``entity_id``, ``date``, ``amount``, ``balance`` and
+            ``description`` columns.
+        profiles: Company profiles, used to order the output rows.
+
+    Returns:
+        DataFrame indexed by ``entity_id`` with min and ending balances, negative month ratio,
+        inflow growth and the exact NSF count for each company.
     """
     tx = transactions.sort_values(["entity_id", "date"], kind="stable").copy()
     tx["month"] = tx["date"].dt.to_period("M")
@@ -706,10 +727,9 @@ def _ledger_outcomes(transactions: pd.DataFrame, profiles: list[CompanyProfile])
         return (recent / prior - 1.0) if prior > 0 else 0.0
 
     inflow_growth = inflows.groupby(level=0).apply(_inflow_growth)
+    nsf_templates = {TEMPLATES[country]["nsf"] for country in TEMPLATES}
     nsf_count = (
-        tx.loc[tx["description"].str.contains(_NSF_PATTERN, case=False, regex=True)]
-        .groupby("entity_id", observed=True)
-        .size()
+        tx.loc[tx["description"].isin(nsf_templates)].groupby("entity_id", observed=True).size()
     )
     frame = pd.DataFrame(
         {
@@ -730,22 +750,33 @@ def generate_portfolio(
     default_rate: float = 0.12,
     seed: int = 42,
     start_date: str = "2023-01-01",
+    outcome_months: int = 12,
 ) -> SyntheticPortfolio:
-    """Generate a portfolio of SME ledgers with learnable default labels.
+    """Generate a portfolio of SME ledgers with forward-looking default labels.
+
+    Each borrower has ``months`` of observable history that features may see, followed by
+    ``outcome_months`` of forward ledger used only to draw the default label. A latent stress
+    variable drives both the ledger and the default probability. Stress is not a feature, so the
+    benchmark stays point in time and free of look-ahead leakage.
 
     Args:
         n_companies: Number of borrowers.
-        months: Months of history per borrower.
+        months: Months of observable history per borrower.
         default_rate: Target mean probability of default used to calibrate the label process.
             The realised rate is binomial around this value.
         seed: Master random seed.
         start_date: First month of the ledger.
+        outcome_months: Months after the observable history used only for labels. Must be at
+            least 3.
 
     Returns:
-        A :class:`SyntheticPortfolio` with transactions, labels and profiles.
+        A :class:`SyntheticPortfolio` with observable transactions, forward outcome transactions,
+        labels, profiles and metadata that records the two windows.
     """
     if n_companies < 2:
         raise ValueError("n_companies must be at least 2.")
+    if outcome_months < 3:
+        raise ValueError("outcome_months must be at least 3.")
     rng = np.random.default_rng(seed)
     profiles: list[CompanyProfile] = []
     for i in range(n_companies):
@@ -786,12 +817,26 @@ def generate_portfolio(
         profiles.append(profile)
 
     frames = [
-        generate_company_transactions(profile, months=months, seed=seed * 10_000 + i)
+        generate_company_transactions(
+            profile,
+            months=months + outcome_months,
+            seed=seed * 10_000 + i,
+            observable_months=months,
+        )
         for i, profile in enumerate(profiles)
     ]
-    transactions = pd.concat(frames, ignore_index=True)
+    full_ledger = pd.concat(frames, ignore_index=True)
 
-    outcomes = _ledger_outcomes(transactions, profiles)
+    # The cut is the first day of the first outcome month. Everything before it is observable.
+    start = pd.Timestamp(start_date).to_period("M").start_time.normalize()
+    cut = (start + pd.DateOffset(months=months)).normalize()
+    transactions = full_ledger.loc[full_ledger["date"] < cut].copy().reset_index(drop=True)
+    outcome_transactions = full_ledger.loc[full_ledger["date"] >= cut].copy().reset_index(drop=True)
+    observation_end = (cut - pd.Timedelta(days=1)).date().isoformat()
+    outcome_start = cut.strftime("%Y-%m")
+    outcome_end = (cut + pd.DateOffset(months=outcome_months - 1)).strftime("%Y-%m")
+
+    outcomes = _ledger_outcomes(outcome_transactions, profiles)
     stress = np.array([p.distress for p in profiles], dtype=float)
     monthly_revenue = np.array([p.monthly_revenue for p in profiles], dtype=float)
     min_balance_ratio = outcomes["min_balance"].to_numpy(dtype=float) / monthly_revenue
@@ -843,13 +888,22 @@ def generate_portfolio(
     metadata = {
         "n_companies": n_companies,
         "months": months,
+        "outcome_months": outcome_months,
+        "observation_end": observation_end,
+        "outcome_window": f"{outcome_start} to {outcome_end}",
         "default_rate_target": default_rate,
         "default_rate_realised": float(label_frame["default_flag"].mean()),
         "seed": seed,
         "start_date": start_date,
         "generator": "opencashflow.data.synthetic.generate_portfolio",
     }
-    return SyntheticPortfolio(transactions, label_frame, profile_frame, metadata)
+    return SyntheticPortfolio(
+        transactions,
+        label_frame,
+        profile_frame,
+        metadata,
+        outcome_transactions=outcome_transactions,
+    )
 
 
 def generate_credit_dataset(

@@ -47,8 +47,8 @@ export LIMIX_SRC=/path/to/LimiX                 # optional if `limix` is install
 On Windows PowerShell:
 
 ```powershell
-$env:LIMIX_MODEL_PATH="C:\models\LimiX-2-1016.ckpt"
-$env:LIMIX_SRC="C:\code\LimiX"
+$env:LIMIX_MODEL_PATH="<path-to>\LimiX-2-1016.ckpt"
+$env:LIMIX_SRC="<path-to>\limix_src"
 ```
 
 ## CPU and Windows notes
@@ -66,6 +66,12 @@ The released config uses **32 ensemble pipelines**. On CPU that is slow. Use:
 The first prediction loads the 1.6 GB checkpoint (about 5 seconds on the development machine).
 Subsequent predictions reuse it. Call `close()` to release memory.
 
+## Runtime on this CPU
+
+Per-fold prediction times measured on this machine: LimiX 286 s on Polish, 47 s on German, 37 s on
+synthetic and 30 s on Bangladesh. Tree models predict in under 0.1 s per fold; their fit time is
+separate. These times depend on the machine and on the number of ensemble pipelines.
+
 ## Classification
 
 ```python
@@ -78,7 +84,8 @@ proba = scorer.predict_proba(X_test)  # (n, n_classes)
 scorer.close()
 ```
 
-`fit` only stores and validates the reference set. It does not train. The positive class is the
+`fit` stores and validates the labelled reference set; it does not train a model. `predict_pd` and
+`predict_proba` perform in-context inference against that reference set. The positive class is the
 second class in sorted order; encode default as `1`. `predict_pd` returns the column for class `1`
 when present.
 
@@ -92,6 +99,13 @@ predictions = scorer.predict_score(X_test)  # original target scale
 
 For leaderboard-equivalent regression, set `softmax_temperature=1.0`.
 
+## Temperature
+
+`softmax_temperature` defaults to `None`. The wrapper resolves `None` to 0.9 for classification,
+which is the benchmark setting, and to 1.0 for regression, which is required for leaderboard-equivalent
+reproduction. Pass a float to override the resolved value for either task. The resolved value is
+stored on the scorer and reported by `describe()` in its `softmax_temperature` field.
+
 ## Imputation
 
 ```python
@@ -100,14 +114,24 @@ imputed = scorer.impute(X_with_nan)
 
 Imputation uses `reg_default_noretrieval_MVI_v2.json`, not the classification config. LimiX returns
 the reference rows followed by the query rows; the wrapper slices the query block and returns the
-same shape as the input. If the scorer is not fitted, the input itself is used as the reference set.
+same shape as the input. Only missing cells are replaced by LimiX's reconstruction; observed cells are
+returned unchanged. If LimiX returns NaN for a missing cell, the wrapper fills it from the training
+median and raises a UserWarning. If the scorer is not fitted, the input itself is used as the reference set.
+
+In one check on 10 masked synthetic cells, LimiX's mean absolute error was 2,365 against 18,697 for
+training-median filling. This is a small sample and is not a general accuracy claim.
 
 ## Categorical features
 
-Categorical columns are ordinal-encoded using categories learned during `fit`; unseen categories map
-to `-1`. This is intentional. High-cardinality one-hot expansion would make the in-context set wide
-and slow. For high-cardinality categories, use target encoding or frequency encoding before LimiX,
-and fit that encoding inside the training fold.
+Categorical columns are ordinal-encoded using categories learned during `fit`. Categories are sorted
+alphabetically, so the integer codes are arbitrary labels with no ordering meaning; unseen categories
+map to `-1`. The wrapper does not pass categorical indices to LimiX. LimiX infers categorical columns
+itself from the training rows: with at least 100 training rows, a column with fewer than 4 unique
+training values is treated as categorical (upstream defaults). With smaller training sets these
+inference branches do not trigger and the ordinal codes are handled as plain numbers. This is
+intentional. High-cardinality one-hot expansion would make the in-context set wide and slow. For
+high-cardinality categories, use target encoding or frequency encoding before LimiX, and fit that
+encoding inside the training fold.
 
 ## What the wrapper checks
 
@@ -134,6 +158,19 @@ Config discovery uses `LIMIX_CONFIG_DIR`, `LIMIX_SRC/config`, `limix_src/config`
 `LimiXScorer` drops the in-memory predictor from pickles. A saved `CashFlowPipeline` stores the
 checkpoint path and configuration, and reloads the weights lazily on the next prediction. The
 checkpoint itself is never embedded in the pickle.
+
+## Known limitations
+
+Classification median-fills missing values before the matrix reaches LimiX, so the pattern of
+missingness is lost. `TreeBaseline` keeps NaN and can use that signal. On the Polish bankruptcy data,
+the NaN count alone gives an AUC of 0.725. This is a documented limitation of the classification
+path; imputation is handled separately by `impute`, which passes NaN through to LimiX's
+feature-imputation task.
+
+## Dataset name
+
+The LimiX cache name includes a SHA-256 digest of the training feature matrix and labels, so two
+different training sets cannot share a preprocessing cache entry.
 
 ## Benchmarks
 

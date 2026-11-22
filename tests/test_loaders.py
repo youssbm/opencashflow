@@ -56,8 +56,26 @@ def test_polish_loader_from_local_fixture(tmp_path):
     assert bundle.y.tolist() == [0, 1]
     assert bundle.name == "polish"
     assert bundle.metadata["doi"] == "10.24432/C5F600"
+    assert bundle.metadata["duplicate_feature_rows"] == 0
     assert "polish" in bundle.summary().lower()
     assert "default rate" in bundle.summary().lower()
+
+
+def test_polish_duplicate_feature_rows(tmp_path):
+    directory = tmp_path / "polish"
+    directory.mkdir(parents=True)
+    attributes = "\n".join(f"@attribute Attr{i} numeric" for i in range(1, 65))
+    first = ",".join(["1.0"] * 64) + ",0"
+    second = ",".join(["1.0"] * 64) + ",0"
+    other = ",".join(["2.0"] * 64) + ",1"
+    (directory / "1year.arff").write_text(
+        f"@relation test\n{attributes}\n@attribute class {{0,1}}\n@data\n"
+        f"{first}\n{second}\n{other}\n",
+        encoding="utf-8",
+    )
+    bundle = load_polish_bankruptcy(data_dir=tmp_path, download=False)
+    assert len(bundle.X) == 3
+    assert bundle.metadata["duplicate_feature_rows"] == 2
 
 
 def test_polish_all_variants(tmp_path):
@@ -96,6 +114,18 @@ def test_german_loader_decodes_categories(tmp_path):
     assert bundle.metadata["cost_matrix"]["approve_bad"] == 5
 
 
+def test_german_exclude_protected(tmp_path):
+    _write_german(tmp_path)
+    protected = {"personal_status_sex", "age_years", "foreign_worker"}
+    full = load_german_credit(data_dir=tmp_path, download=False)
+    reduced = load_german_credit(data_dir=tmp_path, download=False, exclude_protected=True)
+    assert protected <= set(full.X.columns)
+    assert set(full.X.columns) - set(reduced.X.columns) == protected
+    assert not protected & set(reduced.categorical_features)
+    assert set(reduced.metadata["protected_attributes"]) == protected
+    assert reduced.metadata["exclude_protected"] is True
+
+
 def test_bangladesh_loader_drops_leakage(tmp_path):
     path = tmp_path / "bangladesh_sme_1200_records.csv"
     records = {
@@ -128,6 +158,11 @@ def test_bangladesh_loader_drops_leakage(tmp_path):
     assert bundle.X.shape[0] == 2
     assert "missed_payment_last_12m" not in bundle.X.columns
     assert bundle.metadata["dropped_leakage_columns"] == ["missed_payment_last_12m"]
+    assert bundle.metadata["target_definition"] == (
+        "missed any scheduled payment in the 12 months after disbursement (upstream README)"
+    )
+    assert bundle.metadata["source_branch"] == "zenodo"
+    assert "HTTP 403" in bundle.metadata["source_note"]
     assert bundle.split.tolist() == ["train", "test"]
     assert set(bundle.categorical_features) <= set(BANGLADESH_CATEGORICAL)
     leaked = load_bangladesh_sme(data_dir=tmp_path, download=False, include_leakage=True)
@@ -298,7 +333,15 @@ def test_sba_loader_from_local_fixture(tmp_path):
     assert bundle.metadata["default_rate"] == pytest.approx(0.5)
     assert bundle.metadata["approval_date_min"] == "1989-10-04"
     assert bundle.metadata["approval_date_max"] == "2014-06-15"
-    assert "ChgOffPrinGr" in bundle.metadata["dropped_leakage_columns"]
+    assert bundle.metadata["dropped_leakage_columns"] == [
+        "ChgOffDate",
+        "DisbursementDate",
+        "DisbursementGross",
+        "BalanceGross",
+        "ChgOffPrinGr",
+    ]
+    assert bundle.metadata["vintage_min"] is None
+    assert bundle.metadata["vintage_max"] is None
     assert "disbursement_gross" not in bundle.X.columns
     assert "loan_id" not in bundle.X.columns
     assert bundle.X.loc[0, "naics_sector"] == "Accommodation and food services"
@@ -326,6 +369,30 @@ def test_sba_post_approval_and_identifiers(tmp_path):
         "balance_gross",
         "chargeoff_amount",
     ]
+    assert len(bundle.metadata["dropped_leakage_columns"]) == 5
+
+
+def test_sba_vintage_bounds(tmp_path):
+    _write_sba(tmp_path)
+    upper = load_sba_loans(data_dir=tmp_path, download=False, approval_fy_max=2005)
+    assert set(upper.X["approval_fy"]) == {1989, 1997, 2002}
+    assert upper.metadata["vintage_min"] is None
+    assert upper.metadata["vintage_max"] == 2005
+    assert upper.metadata["approval_fy_max"] == 2002
+    lower = load_sba_loans(data_dir=tmp_path, download=False, approval_fy_min=2000)
+    assert set(lower.X["approval_fy"]) == {2002, 2014}
+    assert lower.metadata["vintage_min"] == 2000
+    bounded = load_sba_loans(
+        data_dir=tmp_path,
+        download=False,
+        approval_fy_min=1990,
+        approval_fy_max=2005,
+        max_rows=2,
+    )
+    assert len(bounded.X) == 2
+    assert set(bounded.X["approval_fy"]) <= {1997, 2002}
+    with pytest.raises(ValueError, match="approval_fy bounds"):
+        load_sba_loans(data_dir=tmp_path, download=False, approval_fy_max=1900)
 
 
 def test_sba_row_cap_and_dispatch(tmp_path):
