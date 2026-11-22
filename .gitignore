@@ -47,9 +47,10 @@ data/processed/
 cache/
 benchmarks/results/notebook/
 
-# LimiX local cache
+# LimiX local cache and clone (third-party code, not vendored)
 .cache/
 cache_limix/
+/LimiX/
 
 # OS / editors
 .DS_Store

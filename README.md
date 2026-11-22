@@ -159,14 +159,38 @@ The second command downloads the public datasets into `data/raw`, which is gitig
 
 ## LimiX-2
 
-LimiX-2 is a tabular foundation model. In this repository `fit` stores a reference set and `predict` runs the frozen checkpoint, so nothing is trained here. Set the checkpoint and source paths before using `scorer="limix"`:
+LimiX-2 is a tabular foundation model. In this repository `fit` stores a reference set and `predict` runs the frozen checkpoint, so nothing is trained here. The quick start doesn't need it. Only `scorer="limix"` does.
+
+* Code: [limix-ldm-ai/LimiX](https://github.com/limix-ldm-ai/LimiX) on GitHub, commit `a917fa0`
+* Weights: [stable-ai/LimiX-2-1016](https://huggingface.co/stable-ai/LimiX-2-1016) on Hugging Face, file `LimiX-2-1016.ckpt`, revision `bbbf26c`
+
+Download both into your project folder. Installing LimiX also installs its dependencies, which can be large.
 
 ```bash
-export LIMIX_MODEL_PATH=/path/to/LimiX-2-1016.ckpt
-export LIMIX_SRC=/path/to/LimiX
+git clone https://github.com/limix-ldm-ai/LimiX
+git -C LimiX checkout a917fa0
+python -m pip install -e LimiX
+mkdir -p models
+curl -L -o models/LimiX-2-1016.ckpt https://huggingface.co/stable-ai/LimiX-2-1016/resolve/bbbf26c/LimiX-2-1016.ckpt
+export LIMIX_MODEL_PATH=$PWD/models/LimiX-2-1016.ckpt
+export LIMIX_SRC=$PWD/LimiX
+export LIMIX_CONFIG_DIR=$PWD/LimiX/config
 ```
 
-The weights are under the StableAI LimiX Non-Commercial Licence v1.0, and this repository does not redistribute them. Commercial use needs a separate agreement with Stable AI. On CPU, LimiX is the slow option, and the saved benchmarks take minutes per fold. Setup, pinned commits and troubleshooting are in [docs/limix.md](docs/limix.md).
+PowerShell:
+
+```powershell
+git clone https://github.com/limix-ldm-ai/LimiX
+git -C LimiX checkout a917fa0
+python -m pip install -e LimiX
+New-Item -ItemType Directory -Force models | Out-Null
+curl.exe -L -o models\LimiX-2-1016.ckpt https://huggingface.co/stable-ai/LimiX-2-1016/resolve/bbbf26c/LimiX-2-1016.ckpt
+$env:LIMIX_MODEL_PATH = "$PWD\models\LimiX-2-1016.ckpt"
+$env:LIMIX_SRC = "$PWD\LimiX"
+$env:LIMIX_CONFIG_DIR = "$PWD\LimiX\config"
+```
+
+The `export` and `$env:` lines last for the current terminal session only. The `LimiX/` and `models/` folders are git-ignored, and this repository does not redistribute the weights. The weights are non-commercial, and commercial use needs a separate agreement with Stable AI. For troubleshooting, see [docs/limix.md](docs/limix.md).
 
 ## Documentation
 
