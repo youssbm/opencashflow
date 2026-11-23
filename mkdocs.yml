@@ -16,6 +16,7 @@ markdown_extensions:
       permalink: true
 nav:
   - Home: index.md
+  - Methodology: methodology.md
   - Quickstart: examples/quickstart.md
   - Feature dictionary: features.md
   - Datasets: datasets.md

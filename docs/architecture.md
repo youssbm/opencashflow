@@ -3,21 +3,7 @@
 OpenCashFlow is a four-layer system: data, features, models, and the underwriting pipeline. Each
 layer has an explicit contract so that it can be tested and replaced independently.
 
-```mermaid
-flowchart LR
-    A[Open-banking CSV / API export] --> B[Canonical transaction schema]
-    B --> C[Rule-first categoriser]
-    C --> D[151 cash-flow features]
-    D --> E{Scoring engine}
-    E -->|LimiX-2| F[Probability of default]
-    E -->|LightGBM / XGBoost| F
-    E -->|Logistic regression| F
-    E -->|Heuristic scorecard| F
-    F --> G[Rating and policy decision]
-    G --> H[Reason codes / SHAP / occlusion]
-    D --> I[Segment and portfolio analytics]
-    J[Eurostat / EBA macro table] -. optional lagged join .-> D
-```
+![Architecture: from open-banking export to decision and reasons](assets/flow_architecture.png)
 
 ## Layer contracts
 

@@ -8,6 +8,8 @@
 
 SME credit decisions often rest on financial statements that are months old. A bank statement is current, and it shows how a business really moves money: who pays it, when rent leaves, and whether payroll clears before the overdraft starts to bite. OpenCashFlow turns that ledger into a probability of default (PD), a rating, a decision and reasons a credit officer can read.
 
+> **New to credit risk?** Read the [methodology page](docs/methodology.md) first. It explains the business logic step by step: what the model predicts, how the features are computed, how a probability of default becomes a decision and a rating, and what the limits are.
+
 | | |
 |---|---|
 | **Read** | Bank narratives in seven languages become categories, each with a confidence and a matched rule. |
@@ -15,14 +17,7 @@ SME credit decisions often rest on financial statements that are months old. A b
 | **Score** | LimiX-2, a tabular foundation model, against LightGBM, XGBoost, logistic regression and an untrained scorecard. |
 | **Explain** | Reason codes for each scored company, from TreeSHAP or occlusion. |
 
-```mermaid
-flowchart LR
-    A[Bank transactions] --> B[Categorise<br/>7 languages]
-    B --> C[151 features<br/>point in time]
-    C --> D[PD model<br/>LimiX-2 or baselines]
-    D --> E[Rating and decision]
-    D --> F[Reason codes]
-```
+![How a business is scored, from bank transactions to decision](docs/assets/flow_pipeline.png)
 
 ## What it predicts
 
@@ -196,6 +191,7 @@ The `export` and `$env:` lines last for the current terminal session only. The `
 
 | Guide | What it covers |
 |---|---|
+| [Methodology](docs/methodology.md) | The business logic, step by step: objective, features, PD, decisions and limits |
 | [Quickstart](docs/examples/quickstart.md) | Scoring, explanations, saving and benchmarks |
 | [Feature dictionary](docs/features.md) | All 151 features with formulas and direction |
 | [Datasets](docs/datasets.md) | Sources, licences, leakage rules and citations |

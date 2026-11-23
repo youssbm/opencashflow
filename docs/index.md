@@ -46,6 +46,7 @@ print(pipeline.portfolio_summary(scored))
 
 ## Documentation
 
+* [Methodology](methodology.md): the business logic, step by step
 * [Quickstart](examples/quickstart.md)
 * [Feature dictionary](features.md)
 * [Datasets and licences](datasets.md)
